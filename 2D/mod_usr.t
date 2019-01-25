@@ -21,7 +21,7 @@ module mod_usr
   double precision :: time_save=0
   integer :: count_save=0
   double precision :: t_update_Qe=-1.0e-7,dt_update_Qe=5.0e-4
-  double precision, allocatable :: Ee(:,:),spectra(:,:)
+  double precision, allocatable :: Ee(:,:),spectra(:,:),muN(:,:)
 
 
 contains
@@ -293,7 +293,7 @@ contains
     deallocate(Bu,Bl)
 
     ! create table about electron distribution for different column depth 
-    allocate(Ee(numN,numE),spectra(numN,numE))
+    allocate(Ee(numN,numE),spectra(numN,numE),muN(numN,numE))
     call get_spectra()
 
   end subroutine init_flare_heating
@@ -303,7 +303,7 @@ contains
     use mod_global_parameters
 
     double precision :: K,gamma_,beta,dE_new
-    double precision :: Fe0,Fe,qt,B0,const,const2,keV_erg
+    double precision :: Fe0,Fe,qt,B0,const,const2,const3,keV_erg
     double precision :: Eph,delta,alpha,mec2,r0,E0,N0,c,temp
     double precision :: sigma0
     integer :: iNcol,iE
@@ -325,6 +325,7 @@ contains
     const2=const*(Eb/Ec)**(delta_u-delta_l)
     do iE=1,numE
       Ee(1,iE)=Ec+(iE-1)*dE
+      muN(1,iE)=mu0
       if (Ee(1,iE)<Eb) then
         spectra(1,iE)=const*(Ee(1,iE)/Ec)**(-delta_l)
       else
@@ -336,6 +337,7 @@ contains
     ! change of electron's energy
     const=(2.0+beta/2.0)*gamma_*K/mu0
     const2=2.0/(4.0+beta)
+    const3=beta/(4.0+beta)
     do iNcol=2,numN
       do iE=1,numE
         temp=const*Ncol(iNcol)/((Ee(1,iE)*keV_erg)**2)
@@ -343,6 +345,7 @@ contains
           temp=0.99999
         endif
         Ee(iNcol,iE)=Ee(1,iE)*((1-temp)**const2)
+        muN(iNcol,iE)=mu0*((1-temp)**const3)
       enddo
     enddo
 
@@ -373,6 +376,26 @@ contains
     !  enddo
     !  close(1)
     !endif
+
+
+    !! output pitch angle
+    !if (mype==0) then
+    !  write(fname,'(a12)') 'mu_table.txt'
+    !  open(1,file=fname)
+    !  write(1,*) 'numN numE'
+    !  write(1,*) numN,numE
+    !  do iNcol=1,numN
+    !    write(1,*) Ncol(iNcol)
+    !    write(1,*) 'E spectra'
+    !    do iE=1,numE
+    !      write(1,'(e15.7, e15.7)') , Ee(iNcol,iE),muN(iNcol,iE)
+    !    enddo
+    !  enddo
+    !  close(1)
+    !endif
+
+
+
 
   end subroutine get_spectra
 
@@ -1349,7 +1372,7 @@ contains
             else if (iNlog<1) then
               iNlog=1
             endif
-            Fe=(FL0/ry)/mu0
+            Fe=FL0/ry
             do iE=1,numE-1
               if (Ee(iNlog,iE)>Eph) then
                 sigmaKr=sigma0/(Eph*Ee(iNlog,iE))
@@ -1357,7 +1380,7 @@ contains
                 sigmaBH=sigmaKr*log((1+temp)/(1-temp))
                 dE=Ee(iNlog,iE+1)-Ee(iNlog,iE)
                 HXR_BR(ixO^D)=HXR_BR(ixO^D)+ &
-                              Ne(ixO^D)*Fe*spectra(iNlog,iE)*dE*sigmaBH*dEph
+                              Ne(ixO^D)*Fe*spectra(iNlog,iE)*dE*sigmaBH*dEph/muN(iNlog,iE)
               endif
             enddo
           enddo
@@ -1380,7 +1403,7 @@ contains
             else if (iNlog<1) then
               iNlog=1
             endif
-            Fe=(FR0/ry)/mu0
+            Fe=FR0/ry
             do iE=1,numE-1
               if (Ee(iNlog,iE)>Eph) then
                 sigmaKr=sigma0/(Eph*Ee(iNlog,iE))
@@ -1388,7 +1411,7 @@ contains
                 sigmaBH=sigmaKr*log((1+temp)/(1-temp))
                 dE=Ee(iNlog,iE+1)-Ee(iNlog,iE)
                 HXR_BR(ixO^D)=HXR_BR(ixO^D)+ &
-                              Ne(ixO^D)*Fe*spectra(iNlog,iE)*dE*sigmaBH*dEph
+                              Ne(ixO^D)*Fe*spectra(iNlog,iE)*dE*sigmaBH*dEph/muN(iNlog,iE)
               endif
             enddo
           enddo
@@ -1673,11 +1696,11 @@ contains
 
     integer, intent(in) :: qunit
 
-    !call XR_flux_output(qunit)
+    call XR_flux_output(qunit)
 
     !call output_selected_region(qunit)
 
-    call output_spectra(qunit)
+    !call output_spectra(qunit)
 
   end subroutine special_output
 
