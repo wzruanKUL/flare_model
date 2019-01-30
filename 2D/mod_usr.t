@@ -201,15 +201,15 @@ contains
 
     ! looking for a magnetic field line
     ! initialize heating rate
-    xRmin=2.1d0
-    xRmax=2.2d0
+    xRmin=2.09d0
+    xRmax=2.21d0
     xLmin=-xRmax
     xLmax=-xRmin
     refine_factor=2**(refine_max_level-1)
     dyL=(xprobmax2-xprobmin2)/(domain_nx2*refine_factor)
     dyR=dyL
     maxh=1.0
-    numFL=int(2*(xRmax-xRmin)/dyL)+1
+    numFL=int((xRmax-xRmin)/dyL)+1
     numLH=int(maxh/dyL)
     allocate(ApoL(numFl),ApoR(numFl))
     dApo=abs(Busr/kx*cos(kx*xRmin)-Busr/kx*cos(kx*xRmax))/(numFL-1)
@@ -223,18 +223,26 @@ contains
     allocate(QeL(numFL,numLH),QeR(numFL,numLH))
     allocate(NpL(numFL,numLH),NpR(numFL,numLH))
     allocate(NcolL(numFL,numLH),NcolR(numFL,numLH))
-    do j=1,numLH
-      yL(:,j)=dyL*j
-      yR(:,j)=dyR*j
-    enddo
+
+    !do j=1,numLH
+    !  yL(:,j)=dyL*j
+    !  yR(:,j)=dyR*j
+    !enddo
+    !do ix=1,numFL
+    !  Atom=ApoL(ix)
+    !  do iy=1,numLH
+    !    temp=acos(Atom/(Busr/kx*exp(-(yL(ix,iy)*ly))))
+    !    xL(ix,iy)=-temp/kx
+    !    xR(ix,iy)=temp/kx
+    !  enddo
+    !enddo
+
     do ix=1,numFL
-      Atom=ApoL(ix)
-      do iy=1,numLH
-        temp=acos(Atom/(Busr/kx*exp(-(yL(ix,iy)*ly))))
-        xL(ix,iy)=-temp/kx
-        xR(ix,iy)=temp/kx
-      enddo
+      xL(ix,1)=xLmin+ix*dyL
+      xR(ix,1)=xRmin+ix*dyL
     enddo
+    
+
     QeL=0
     QeR=0    
     NcolL=1.0e18
@@ -325,7 +333,6 @@ contains
     const2=const*(Eb/Ec)**(delta_u-delta_l)
     do iE=1,numE
       Ee(1,iE)=Ec+(iE-1)*dE
-      muN(1,iE)=mu0
       if (Ee(1,iE)<Eb) then
         spectra(1,iE)=const*(Ee(1,iE)/Ec)**(-delta_l)
       else
@@ -376,26 +383,6 @@ contains
     !  enddo
     !  close(1)
     !endif
-
-
-    !! output pitch angle
-    !if (mype==0) then
-    !  write(fname,'(a12)') 'mu_table.txt'
-    !  open(1,file=fname)
-    !  write(1,*) 'numN numE'
-    !  write(1,*) numN,numE
-    !  do iNcol=1,numN
-    !    write(1,*) Ncol(iNcol)
-    !    write(1,*) 'E spectra'
-    !    do iE=1,numE
-    !      write(1,'(e15.7, e15.7)') , Ee(iNcol,iE),muN(iNcol,iE)
-    !    enddo
-    !  enddo
-    !  close(1)
-    !endif
-
-
-
 
   end subroutine get_spectra
 
@@ -613,7 +600,14 @@ contains
     double precision :: sumQe
     integer :: iLR,iNlog
 
-    call get_Np_profile(xLR,yLR,Np)
+    !call get_Np_profile(xLR,yLR,Np)
+
+    if (iLR==1) then
+      Np=NpL
+    else
+      Np=NpR
+    endif
+    
 
     ! column depth along field lines
     Nh=0
@@ -639,7 +633,12 @@ contains
         dlz=cos(theta)*dlx
         dlxy=sqrt(dlx**2+dly**2)
         dl=sqrt(dlx**2+dly**2+dlz**2)
-        ry=abs(xLR(numFL,iyLH)-xLR(1,iyLH))/abs(xLR(numFL,1)-xLR(1,1))
+        if (ixFL<numFL) then
+          ry=abs(xLR(ixFL+1,iyLH)-xLR(ixFL,iyLH))/abs(xLR(ixFL+1,1)-xLR(ixFL,1))
+        else
+          ry=abs(xLR(ixFL,iyLH)-xLR(ixFL-1,iyLH))/abs(xLR(ixFL,1)-xLR(ixFL-1,1))
+        endif
+        !ry=abs(xLR(numFL,iyLH)-xLR(1,iyLH))/abs(xLR(numFL,1)-xLR(1,1))
         iNlog=int(log10(Nh(ixFL,iyLH)/Nmin)/dNlog+0.5)+1
         if (iNlog<1) then
           iNlog=1
@@ -649,10 +648,8 @@ contains
     enddo
 
     if (iLR==1) then
-      NpL=Np
       NcolL=Nh
     else 
-      NpR=Np
       NcolR=Nh
     endif
 
@@ -796,9 +793,27 @@ contains
     double precision, intent(in) :: qt
     character (20) :: fname
     integer :: ixFL,iyLH
-    
+    double precision :: t1,t2,t3
+   
+    !if (iprob==1) then
+    !  t1=mpi_wtime()
+    !  call update_Bfield()
+    !  !call check_neighbors()
+    !  t2=mpi_wtime()
+    !  if (mype==0) then
+    !    print *, t2-t1,numFL,numLH
+    !  endif
+    !endif
+ 
     if (iprob>=6 .and. convert) then
+      t1=mpi_wtime()
+      call update_Bfield()
+      t2=mpi_wtime()
       call get_flare_eflux()
+      t3=mpi_wtime()
+      if (mype==0) then
+        print *, t2-t1,t3-t2,numFL,numLH
+      endif
     endif
 
     if (iprob>=6) then
@@ -807,33 +822,362 @@ contains
       endif
 
       if (qt>t_update_Qe) then
+        call update_Bfield()
         call get_flare_eflux()
         t_update_Qe=t_update_Qe+dt_update_Qe
       endif
-
-      !! output e flux
-      !if (mype==0) then
-      !  if (global_time>=time_save) then
-      !    time_save=time_save+dtsave(2)
-      !    write(fname,'(a4,i04.4,a4)') 'QehL',count_save,'.txt'
-      !    open(1,file=fname)
-      !    write(1,*) 'numFL','numLH'
-      !    write(1,*) numFL,numLH
-      !    do ixFL=1,numFL
-      !      write(1,*) ixFL
-      !      write(1,*) 'x y rho QeH'
-      !      do iyLH=1,numLH
-      !        write(1,'(e15.7, e15.7, e15.7, e15.7)') xL(ixFL,iyLH), &
-      !              yL(ixFL,iyLH),NpL(ixFL,iyLH),QeL(ixFL,iyLH)
-      !      enddo
-      !    enddo
-      !    close(1)
-      !    count_save=count_save+1
-      !  endif
-      !endif
     endif
 
   end subroutine
+
+  subroutine update_Bfield()
+    ! update the location of mangetic field lines
+    use mod_usr_methods
+    use mod_global_parameters
+
+    integer :: iFL
+    logical :: forward
+
+    do iFL=1,numFL
+      forward=.FALSE.    
+      call update_line(xL(iFL,:),yL(iFL,:),NpL(iFL,:),numLH,forward)
+      forward=.TRUE.
+      call update_line(xR(iFL,:),yR(iFL,:),NpR(iFL,:),numLH,forward)
+    enddo
+
+  end subroutine update_Bfield
+
+  subroutine update_line(xf,yf,Npf,numP,forward)
+    ! trace a field line
+    use mod_usr_methods
+    use mod_global_parameters
+
+    integer :: numP
+    double precision :: xf(numP),yf(numP),Npf(numP)
+    double precision :: xtemp,ytemp
+    logical :: forward
+
+    integer          :: ixO^L,ixO^D,j
+    integer :: iigrid,igrid
+    integer :: igrid_prev,igrid_now,igrid_next
+    integer :: ipe_prev,ipe_now,ipe_next
+    integer :: igrid_rc,ipe_rc
+    integer :: mainpe
+    integer :: status(mpi_status_size)
+
+    double precision :: xbmin,xbmax,ybmin,ybmax,dxb,dyb
+    logical :: newpe
+
+    ! set processor 0 as main processor
+    mainpe=0
+
+    ! find the grid and pe of the first point
+    LOOP1: do iigrid=1,igridstail; igrid=igrids(iigrid);
+      call update_block_para(igrid,dxb,dyb,xbmin,xbmax,ybmin,ybmax)
+      if (xf(1)>=xbmin .and. xf(1)<=xbmax .and. yf(1)>=ybmin .and. yf(1)<=ybmax) then
+        igrid_now=igrid
+        ipe_now=mype
+        call MPI_SEND(igrid_now,1,MPI_INTEGER,mainpe,0,icomm,ierrmpi)
+        call MPI_SEND(ipe_now,1,MPI_INTEGER,mainpe,1,icomm,ierrmpi)
+        exit LOOP1
+      endif
+    enddo LOOP1
+
+    if (mype==mainpe) then
+      call MPI_RECV(igrid_rc,1,MPI_INTEGER,MPI_ANY_SOURCE,0,icomm,status,ierrmpi)
+      call MPI_RECV(ipe_rc,1,MPI_INTEGER,MPI_ANY_SOURCE,1,icomm,status,ierrmpi)
+      igrid_now=igrid_rc
+      ipe_now=ipe_rc
+    endif
+    call MPI_BCAST(igrid_now,1,MPI_INTEGER,mainpe,icomm,ierrmpi)
+    call MPI_BCAST(ipe_now,1,MPI_INTEGER,mainpe,icomm,ierrmpi)
+
+
+    ! other points in field line    
+    j=1
+    do while (j<numP)
+      newpe=.TRUE.
+      if (j>1) then
+        ipe_now=ipe_next
+        igrid_now=igrid_next
+      endif
+      mainpe=ipe_now
+
+      if (mype==ipe_now) then
+        igrid=igrid_now
+        ! find next point in this field line and get density of current point
+        call find_next(igrid,xf(j),yf(j),xf(j+1),yf(j+1),Npf(j),forward)
+        ! check the pe of next point
+        call check_next(igrid,igrid_next,ipe_next,xf(j+1),yf(j+1),newpe)
+      endif
+
+      call MPI_BCAST(newpe,1,MPI_LOGICAL,mainpe,icomm,ierrmpi)
+      call MPI_BCAST(xf(j+1),1,MPI_DOUBLE_PRECISION,mainpe,icomm,ierrmpi)
+      call MPI_BCAST(yf(j+1),1,MPI_DOUBLE_PRECISION,mainpe,icomm,ierrmpi)
+      call MPI_BCAST(Npf(j),1,MPI_DOUBLE_PRECISION,mainpe,icomm,ierrmpi)
+
+      ! out of simulation box
+      if (xf(j+1)>=xprobmax1 .or. xf(j+1)<=xprobmin1 .or. &
+          yf(j+1)>=xprobmax2 .or. yf(j+1)<=xprobmin2) then
+        return
+      endif
+
+      ! next point is in another pe, find out grid and pe numbers
+      if (newpe .eqv. .TRUE.) then
+        call find_grid(ipe_now,igrid_now,ipe_next,igrid_next,xf(j+1),yf(j+1))
+      else
+        call MPI_BCAST(igrid_next,1,MPI_INTEGER,mainpe,icomm,ierrmpi)
+        call MPI_BCAST(ipe_next,1,MPI_INTEGER,mainpe,icomm,ierrmpi)
+      endif
+
+      j=j+1
+    enddo
+
+    ! find the density for the last point
+    if (j==numP) then
+      ipe_now=ipe_next
+      igrid_now=igrid_next
+      mainpe=ipe_now
+      if (mype==ipe_now) then
+        call find_next(igrid_now,xf(j),yf(j),xtemp,ytemp,Npf(j),forward)
+      endif
+      call MPI_BCAST(Npf(j),1,MPI_DOUBLE_PRECISION,mainpe,icomm,ierrmpi)
+    endif
+
+  end subroutine update_line
+
+  subroutine find_grid(ipe_now,igrid_now,ipe_next,igrid_next,xf1,yf1)
+    ! find for grid and pe numbers
+    use mod_usr_methods
+    use mod_global_parameters
+    use mod_forest
+
+    integer :: igrid,iigrid,igrid_now,ipe_now,igrid_next,ipe_next
+    integer :: igrid_recv,ipe_recv
+    double precision :: xf1,yf1
+    double precision :: xbmin,xbmax,ybmin,ybmax,dxb,dyb
+    integer :: grid_nb(18),pe_nb(18)
+    integer :: i,j,k
+    integer :: found,found_recv,mainpe
+    integer :: status(mpi_status_size)
+
+    mainpe=0
+    grid_nb=-1
+    pe_nb=-1
+
+    k=1
+    if (mype==ipe_now) then
+      do i=-1,1,1
+        do j=-1,1,1
+          grid_nb(k)=neighbor(1,i,j,igrid_now)
+          pe_nb(k)=neighbor(2,i,j,igrid_now)
+          grid_nb(9+k)=neighbor_child(1,i,j,igrid_now)
+          pe_nb(9+k)=neighbor_child(2,i,j,igrid_now)
+          k=k+1
+        enddo
+      enddo 
+    endif
+
+
+    call MPI_BCAST(grid_nb,18,MPI_INTEGER,ipe_now,icomm,ierrmpi)
+    call MPI_BCAST(pe_nb,18,MPI_INTEGER,ipe_now,icomm,ierrmpi)
+
+    found=0
+
+
+    ! looking for point in neighbors
+    LOOPPE: do j=1,18
+      !if (mype==pe_nb(j) .and. grid_nb(j)>0 .and.  grid_nb(j)<=max_blocks .and. & 
+      !    igrid_inuse(grid_nb(j),mype) .eqv. .True.) then
+      if (mype==pe_nb(j) .and. grid_nb(j)>0 .and.  grid_nb(j)<=max_blocks) then
+        call update_block_para(grid_nb(j),dxb,dyb,xbmin,xbmax,ybmin,ybmax)
+        if (xf1>=xbmin .and. xf1<=xbmax .and. yf1>=ybmin .and. yf1<=ybmax) then
+          igrid_next=grid_nb(j)
+          ipe_next=mype
+          found=1          
+          call MPI_SEND(igrid_next,1,MPI_INTEGER,mainpe,2,icomm,ierrmpi)
+          call MPI_SEND(ipe_next,1,MPI_INTEGER,mainpe,3,icomm,ierrmpi)
+          exit LOOPPE
+        endif
+      endif
+    enddo LOOPPE
+
+    call MPI_ALLREDUCE(found,found_recv,1,MPI_INTEGER,MPI_SUM,icomm,ierrmpi)
+    found=found_recv
+
+    ! next point is not in neighbors
+    if (found==0) then
+      LOOPF: do iigrid=1,igridstail; igrid=igrids(iigrid);
+        call update_block_para(igrid,dxb,dyb,xbmin,xbmax,ybmin,ybmax)
+        if (xf1>=xbmin .and. xf1<=xbmax .and. yf1>=ybmin .and. yf1<=ybmax) then
+          igrid_next=igrid
+          ipe_next=mype
+          call MPI_SEND(igrid_next,1,MPI_INTEGER,mainpe,2,icomm,ierrmpi)
+          call MPI_SEND(ipe_next,1,MPI_INTEGER,mainpe,3,icomm,ierrmpi)
+          exit LOOPF
+        endif
+      enddo LOOPF
+    endif
+
+    if (mype==mainpe) then
+      call MPI_RECV(igrid_recv,1,MPI_INTEGER,MPI_ANY_SOURCE,2,icomm,status,ierrmpi)
+      call MPI_RECV(ipe_recv,1,MPI_INTEGER,MPI_ANY_SOURCE,3,icomm,status,ierrmpi)
+      igrid_next=igrid_recv
+      ipe_next=ipe_recv
+    endif
+    call MPI_BCAST(igrid_next,1,MPI_INTEGER,mainpe,icomm,ierrmpi)
+    call MPI_BCAST(ipe_next,1,MPI_INTEGER,mainpe,icomm,ierrmpi)
+
+  end subroutine find_grid
+
+  subroutine check_next(igrid,igrid_next,ipe_next,xf1,yf1,newpe)
+    ! check the grid and pe of next point
+    use mod_usr_methods
+    use mod_global_parameters
+    use mod_forest
+
+    integer :: igrid,igird_nb,igrid_next,ipe_next
+    double precision :: xf1,yf1
+    double precision :: xbmin,xbmax,ybmin,ybmax,dxb,dyb
+    integer :: grid_nb(18),pe_nb(18)
+    integer :: i,j,k
+    logical :: newpe
+
+    grid_nb=-1
+    pe_nb=-1
+
+    call update_block_para(igrid,dxb,dyb,xbmin,xbmax,ybmin,ybmax)
+
+    if (xf1>=xbmin .and. xf1<=xbmax .and. yf1>=ybmin .and. yf1<=ybmax) then
+      igrid_next=igrid
+      ipe_next=mype
+      newpe=.FALSE.
+    else
+      k=1
+      do i=-1,1,1
+        do j=-1,1,1
+          grid_nb(k)=neighbor(1,i,j,igrid)
+          pe_nb(k)=neighbor(2,i,j,igrid)
+          grid_nb(9+k)=neighbor_child(1,i,j,igrid)
+          pe_nb(9+k)=neighbor_child(2,i,j,igrid)
+          k=k+1
+        enddo
+      enddo 
+      LOOPGRID: do j=1,18
+        !if (mype==pe_nb(j) .and. grid_nb(j)>0 .and.  grid_nb(j)<=max_blocks .and. & 
+        !    igrid_inuse(grid_nb(j),mype) .eqv. .True.) then
+        if (mype==pe_nb(j) .and. grid_nb(j)>0 .and.  grid_nb(j)<=max_blocks) then 
+          call update_block_para(grid_nb(j),dxb,dyb,xbmin,xbmax,ybmin,ybmax)
+          if (xf1>=xbmin .and. xf1<=xbmax .and. yf1>=ybmin .and. yf1<=ybmax) then
+            igrid_next=grid_nb(j)
+            ipe_next=mype
+            newpe=.FALSE.
+            exit LOOPGRID
+          endif
+        endif
+      enddo LOOPGRID
+    endif
+
+
+  end subroutine check_next
+
+  subroutine find_next(igrid,xf0,yf0,xf1,yf1,Np0,forward)
+    !find next point
+    use mod_usr_methods
+    use mod_global_parameters
+
+    integer :: igrid
+    logical :: forward
+
+    integer          :: ixO^L,ixO^D,j
+    double precision :: xf0,yf0,xf1,yf1,Np0
+    double precision :: xbmin,xbmax,ybmin,ybmax,dxb,dyb,dxf,dyf
+    integer :: ixb,iyb,ix,iy
+    integer :: ixbl,ixbu,iybl,iybu
+    double precision :: Bx00,Bx01,Bx10,Bx11,By00,By01,By10,By11,Bx,By,xd,yd
+    double precision :: Bnear(0:1,0:1,2),Nnear(0:1,0:1)
+
+    dxf=0
+    dyf=dyL
+
+    ixOmin1=ixmlo1
+    ixOmin2=ixmlo2
+    ixOmax1=ixmhi1
+    ixOmax2=ixmhi2
+
+    call update_block_para(igrid,dxb,dyb,xbmin,xbmax,ybmin,ybmax)
+
+    ixbl=floor((xf0-ps(igrid)%x(ixOmin1,ixOmin2,1))/dxb)+ixOmin1 
+    iybl=floor((yf0-ps(igrid)%x(ixOmin1,ixOmin2,2))/dyb)+ixOmin2 
+    xd=(xf0-ps(igrid)%x(ixbl,iybl,1))/dxb
+    yd=(yf0-ps(igrid)%x(ixbl,iybl,2))/dyb
+
+    ! interpolation
+    if (B0field) then
+      do ix=0,1
+        do iy=0,1
+          do j=1,2
+            Bnear(ix,iy,j)=ps(igrid)%w(ixbl+ix,iybl+iy,mag(j))+ &
+                           ps(igrid)%B0(ixbl+ix,iybl+iy,j,0)
+          enddo
+          Nnear(ix,iy)=ps(igrid)%w(ixbl+ix,iybl+iy,rho_)
+        enddo
+      enddo
+    else
+      do ix=0,1
+        do iy=0,1
+          do j=1,2
+            Bnear(ix,iy,j)=ps(igrid)%w(ixbl+ix,iybl+iy,mag(j))
+          enddo
+          Nnear(ix,iy)=ps(igrid)%w(ixbl+ix,iybl+iy,rho_)
+        enddo
+      enddo
+    endif
+    Bx=Bnear(0,0,1)*(1-xd)*(1-yd)+Bnear(0,1,1)*(1-xd)*yd+ &
+       Bnear(1,0,1)*xd*(1-yd)+Bnear(1,1,1)*xd*yd
+    By=Bnear(0,0,2)*(1-xd)*(1-yd)+Bnear(0,1,2)*(1-xd)*yd+ &
+       Bnear(1,0,2)*xd*(1-yd)+Bnear(1,1,2)*xd*yd
+    Np0=Nnear(0,0)*(1-xd)*(1-yd)+Nnear(0,1)*(1-xd)*yd+ &
+        Nnear(1,0)*xd*(1-yd)+Nnear(1,1)*xd*yd
+    Np0=Np0*unit_numberdensity    
+
+    !ixbu=ixbl+1
+    !iybu=iybl+1
+
+    !if(B0field) then
+    !  Bx00=ps(igrid)%w(ixbl,iybl,mag(1))+ps(igrid)%B0(ixbl,iybl,1,0)
+    !  Bx01=ps(igrid)%w(ixbl,iybu,mag(1))+ps(igrid)%B0(ixbl,iybu,1,0)
+    !  Bx10=ps(igrid)%w(ixbu,iybl,mag(1))+ps(igrid)%B0(ixbu,iybl,1,0)
+    !  Bx11=ps(igrid)%w(ixbu,iybu,mag(1))+ps(igrid)%B0(ixbu,iybu,1,0)
+    !  By00=ps(igrid)%w(ixbl,iybl,mag(2))+ps(igrid)%B0(ixbl,iybl,2,0)
+    !  By01=ps(igrid)%w(ixbl,iybu,mag(2))+ps(igrid)%B0(ixbl,iybu,2,0)
+    !  By10=ps(igrid)%w(ixbu,iybl,mag(2))+ps(igrid)%B0(ixbu,iybl,2,0)
+    !  By11=ps(igrid)%w(ixbu,iybu,mag(2))+ps(igrid)%B0(ixbu,iybu,2,0)
+    !else
+    !  Bx00=ps(igrid)%w(ixbl,iybl,mag(1))
+    !  Bx01=ps(igrid)%w(ixbl,iybu,mag(1))
+    !  Bx10=ps(igrid)%w(ixbu,iybl,mag(1))
+    !  Bx11=ps(igrid)%w(ixbu,iybu,mag(1))
+    !  By00=ps(igrid)%w(ixbl,iybl,mag(2))
+    !  By01=ps(igrid)%w(ixbl,iybu,mag(2))
+    !  By10=ps(igrid)%w(ixbu,iybl,mag(2))
+    !  By11=ps(igrid)%w(ixbu,iybu,mag(2))
+    !endif
+    !Bx=Bx00*(1-xd)*(1-yd)+Bx01*(1-xd)*yd+Bx10*xd*(1-yd)+Bx11*xd*yd
+    !By=By00*(1-xd)*(1-yd)+By01*(1-xd)*yd+By10*xd*(1-yd)+By11*xd*yd
+
+    if (forward .eqv. .TRUE.) then
+      !dyf=dyL*By/sqrt(Bx**2+By**2)
+      dyf=dyL*By/abs(By)
+    else
+      !dyf=-dyL*By/sqrt(Bx**2+By**2)
+      dyf=-dyL*By/abs(By)
+    endif
+    dxf=dyf*Bx/By
+    xf1=xf0+dxf
+    yf1=yf0+dyf
+
+  end subroutine find_next
 
   subroutine getlQ(lQgrid,ixI^L,ixO^L,qt,w,x)
     !!calculate localized heating at chromosphere
@@ -849,6 +1193,8 @@ contains
     double precision :: sscale,tonset,tstop,tflare,tpeak,tscale,fstop,thstop
     double precision :: lQheat,lQt1,lQt2,lQtw
     integer          :: ixO^D,j,ixFL,iyLH
+    double precision :: dxL,dxR,dyLR,xIL,xIR,QIL,QIR
+
 
     !-----------------------------------------------------------------------------
     ! 180 s of the flare heating
@@ -932,30 +1278,81 @@ contains
     {enddo\}
     lQgrid(ixO^S)=lQgrid(ixO^S)*dsqrt(1/(3.14*lQtw**2))*dexp(-(qt-2.0*lQtw)**2/(lQtw**2))
 
-
     case(6)
+    ! calculate lQ via 2D interpolation
     {do ixO^DB=ixOmin^DB,ixOmax^DB\}
-      Apo=Busr/kx*cos(kx*x(ixO^D,1))*dexp(-ly*x(ixO^D,2))
-      if(Apo>=ApoL(1) .and. Apo<=ApoL(numFL) .and. x(ixO^D,1)<zero .and. x(ixO^D,2)>zero) then
-        ixFL=floor((Apo-ApoL(1))/dApo+0.5)+1
-        iyLH=floor((x(ixO^D,2)-yL(ixFL,1))/dyL+0.5)+1
-        if (iyLH>=1 .and. iyLH<=numLH) then
-          lQgrid(ixO^D)=QeL(ixFL,iyLH)
-        else
-          lQgrid(ixO^D)=0.0
-        endif
-      endif
+      iyLH=floor((x(ixO^D,2)-yL(1,1))/dyL)+1
+      if (iyLH>=1 .and. iyLH<numLH) then
+        dyLR=(x(ixO^D,2)-yL(1,iyLH))/(yL(1,iyLH+1)-yL(1,iyLH))
+        ! left foot
+        if (x(ixO^D,1)>=(xL(1,iyLH)*(1.0-dyLR)+xL(1,iyLH+1)*dyLR) .and. &
+            x(ixO^D,1)<(xL(numFL,iyLH)*(1.0-dyLR)+xL(numFL,iyLH+1)*dyLR)) then
+          do ixFL=1,numFL-1
+            xIL=xL(ixFL,iyLH)*(1.0-dyLR)+xL(ixFL,iyLH+1)*dyLR
+            xIR=xL(ixFL+1,iyLH)*(1.0-dyLR)+xL(ixFL+1,iyLH+1)*dyLR
+            if (x(ixO^D,1)>=xIL .and. x(ixO^D,1)<xIR) then
+              QIL=QeL(ixFL,iyLH)*(1.0-dyLR)+QeL(ixFL,iyLH+1)*dyLR
+              QIR=QeL(ixFL+1,iyLH)*(1.0-dyLR)+QeL(ixFL+1,iyLH+1)*dyLR
+              dxL=(x(ixO^D,1)-xIL)/(xIR-xIL)
+              lQgrid(ixO^D)=QIL*(1.0-dxL)+QIR*dxL
+            endif
+          enddo
 
-      if(Apo>=ApoL(1) .and. Apo<=ApoL(numFL) .and. x(ixO^D,1)>zero .and. x(ixO^D,2)>zero) then
-        ixFL=floor((Apo-ApoR(1))/dApo+0.5)+1
-        iyLH=floor((x(ixO^D,2)-yR(ixFL,1))/dyR+0.5)+1
-        if (iyLH>=1 .and. iyLH<=numLH) then
-          lQgrid(ixO^D)=QeR(ixFL,iyLH)
-        else
-          lQgrid(ixO^D)=0.0
+        ! right foot
+        elseif (x(ixO^D,1)>=(xR(1,iyLH)*(1.0-dyLR)+xR(1,iyLH+1)*dyLR) .and. &
+            x(ixO^D,1)<(xR(numFL,iyLH)*(1.0-dyLR)+xR(numFL,iyLH+1)*dyLR)) then
+          do ixFL=1,numFL-1
+            xIL=xR(ixFL,iyLH)*(1.0-dyLR)+xR(ixFL,iyLH+1)*dyLR
+            xIR=xR(ixFL+1,iyLH)*(1.0-dyLR)+xR(ixFL+1,iyLH+1)*dyLR
+            if (x(ixO^D,1)>=xIL .and. x(ixO^D,1)<xIR) then
+              QIL=QeR(ixFL,iyLH)*(1.0-dyLR)+QeR(ixFL,iyLH+1)*dyLR
+              QIR=QeR(ixFL+1,iyLH)*(1.0-dyLR)+QeR(ixFL+1,iyLH+1)*dyLR
+              dxR=(x(ixO^D,1)-xIL)/(xIR-xIL)
+              lQgrid(ixO^D)=QIL*(1.0-dxR)+QIR*dxR
+            endif
+          enddo
         endif
+
+        !! right foot
+        !elseif (x(ixO^D,1)>=xR(1,iyLH) .and. x(ixO^D,1)<xR(numFL,iyLH)) then
+        !  do ixFL=1,numFL-1
+        !    if (x(ixO^D,1)>=xR(ixFL,iyLH) .and. x(ixO^D,1)<xR(ixFL+1,iyLH)) then
+        !      lQgrid(ixO^D)=0
+        !      dxR=(x(ixO^D,1)-xR(ixFL,iyLH))/(xR(ixFL+1,iyLH)-xR(ixFL,iyLH))
+        !      lQgrid(ixO^D)=(1.0-dxR)*QeR(ixFL,iyLH)+dxR*QeR(ixFL+1,iyLH)
+        !    endif
+        !  enddo
+        !endif
+
+      else
+        lQgrid(ixO^D)=0.0
       endif
     {enddo\}
+
+
+    !case(6)
+    !{do ixO^DB=ixOmin^DB,ixOmax^DB\}
+    !  Apo=Busr/kx*cos(kx*x(ixO^D,1))*dexp(-ly*x(ixO^D,2))
+    !  if(Apo>=ApoL(1) .and. Apo<=ApoL(numFL) .and. x(ixO^D,1)<zero .and. x(ixO^D,2)>zero) then
+    !    ixFL=floor((Apo-ApoL(1))/dApo+0.5)+1
+    !    iyLH=floor((x(ixO^D,2)-yL(ixFL,1))/dyL+0.5)+1
+    !    if (iyLH>=1 .and. iyLH<=numLH) then
+    !      lQgrid(ixO^D)=QeL(ixFL,iyLH)
+    !    else
+    !      lQgrid(ixO^D)=0.0
+    !    endif
+    !  endif
+
+    !  if(Apo>=ApoL(1) .and. Apo<=ApoL(numFL) .and. x(ixO^D,1)>zero .and. x(ixO^D,2)>zero) then
+    !    ixFL=floor((Apo-ApoR(1))/dApo+0.5)+1
+    !    iyLH=floor((x(ixO^D,2)-yR(ixFL,1))/dyR+0.5)+1
+    !    if (iyLH>=1 .and. iyLH<=numLH) then
+    !      lQgrid(ixO^D)=QeR(ixFL,iyLH)
+    !    else
+    !      lQgrid(ixO^D)=0.0
+    !    endif
+    !  endif
+    !{enddo\}
 
     end select
 
@@ -1660,8 +2057,8 @@ contains
     !call get_AIA(AIAgrid,ixI^L,ixO^L,w,x)
     !w(ixO^S,nw+5)=AIAgrid(ixO^S)
 
-    call get_SXR(SXR,ixI^L,ixO^L,w,x,6,12)
-    w(ixO^S,nw+4)=SXR(ixO^S)
+    !call get_SXR(SXR,ixI^L,ixO^L,w,x,6,12)
+    !w(ixO^S,nw+4)=SXR(ixO^S)
 
     !call get_HXR_BR(HXR_BR,ixI^L,ixO^L,w,x,12,25)
     !w(ixO^S,nw+7)=HXR_BR(ixO^S)
@@ -1672,8 +2069,8 @@ contains
     !call get_HXR_IC(HXR_IC,ixI^L,ixO^L,w,x)
     !w(ixO^S,nw+9)=HXR_IC(ixO^S)
 
-    call get_HXR_BR(HXR_BR,ixI^L,ixO^L,w,x,25,50)
-    w(ixO^S,nw+5)=HXR_BR(ixO^S)
+    !call get_HXR_BR(HXR_BR,ixI^L,ixO^L,w,x,25,50)
+    !w(ixO^S,nw+5)=HXR_BR(ixO^S)
 
     !call get_IRIS(EUV,ixI^L,ixO^L,w,x)
     !w(ixO^S,nw+2)=EUV(ixO^S)
@@ -1685,7 +2082,7 @@ contains
     use mod_global_parameters
     character(len=*) :: varnames
 
-    varnames='Te Alfv lQ SXR_6_12 HXR_25_50'
+    varnames='Te Alfv lQ'
     !varnames='Te Alfv lQ SXR AIA131 HXR_6_12 HXR_12_25 HXR_25_50 HXR_IC'
     !varnames='Te Alfv divB beta bQ lQ rad j1 j2 j3 SXR AIA131 HXR_BR HXR_IC'
 
@@ -1696,17 +2093,59 @@ contains
 
     integer, intent(in) :: qunit
 
-    call XR_flux_output(qunit)
+    !call XR_flux_output(qunit)
 
     !call output_selected_region(qunit)
 
     !call output_spectra(qunit)
 
+    call output_Bfield(qunit)
+
   end subroutine special_output
+
+  subroutine output_Bfield(qunit)
+    ! output magnetic field lines
+    use mod_usr_methods
+    use mod_global_parameters
+
+    integer          :: iFL,iLH
+
+    integer, intent(in) :: qunit
+    character(len=30)   :: filename
+    integer :: iigrid,igrid
+    integer :: filenr
+    logical :: fileopen
+
+    if (mype==0) then
+      inquire(qunit,opened=fileopen)
+      if(.not.fileopen)then
+        ! generate filename 
+        filenr=snapshotini
+        if (autoconvert) filenr=snapshotnext
+        write(filename,'(a,i4.4,a)') trim(base_filename),filenr,".txt"
+      endif
+      open(1,file=filename)
+      write(1,*) global_time
+      write(1,*) numFL,numLH
+      do iFL=1,numFL
+        write(1,*) 'xL yL xR yR NpL NpR QeL QeR'
+        do iLH=1,numLH
+          write(1,'(e15.7, e15.7, e15.7, e15.7, e15.7, e15.7, e15.7, e15.7)') &
+                    xL(iFL,iLH),yL(iFL,iLH), &
+                    xR(iFL,iLH),yR(iFL,iLH), &
+                    NpL(iFL,iLH),NpR(iFL,iLH), &
+                    QeL(iFL,iLH),QeR(iFL,iLH)
+        enddo
+      enddo
+      close(1)
+    endif
+
+  end subroutine output_Bfield
 
   subroutine output_spectra(qunit)
     ! output HXR spectra
     use mod_usr_methods
+    use mod_global_parameters
 
     integer          :: ixO^L,ixO^D,j
 
