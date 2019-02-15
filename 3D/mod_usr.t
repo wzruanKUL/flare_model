@@ -871,7 +871,7 @@ contains
     LOOP1: do iigrid=1,igridstail; igrid=igrids(iigrid);
       call update_block_para(igrid,dxb^D,xb^L)
       inblock=0
-      {if (xf(1,^DB)>=xbmin^DB .and. xf(1,^DB)<=xbmax^DB) inblock=inblock+1\}
+      {if (xf(1,^DB)>=xbmin^DB .and. xf(1,^DB)<xbmax^DB) inblock=inblock+1\}
       if (inblock==ndim) then
         igrid_now=igrid
         ipe_now=mype
@@ -1027,7 +1027,7 @@ contains
 
     call update_block_para(igrid,dxb^D,xb^L)
     inblock=0
-    {if (xf1(^D)>=xbmin^D .and. xf1(^D)<=xbmax^D) inblock=inblock+1\}
+    {if (xf1(^D)>=xbmin^D .and. xf1(^D)<xbmax^D) inblock=inblock+1\}
     if (inblock==ndim) then
       ! in the same grid with previous point
       igrid_next=igrid
@@ -1041,7 +1041,7 @@ contains
             neighbor(1,ix^D,igrid)<=max_blocks) then
           call update_block_para(neighbor(1,ix^D,igrid),dxb^D,xb^L)
           inblock_n=0
-          {if (xf1(^D)>=xbmin^D .and. xf1(^D)<=xbmax^D) inblock_n=inblock_n+1\}
+          {if (xf1(^D)>=xbmin^D .and. xf1(^D)<xbmax^D) inblock_n=inblock_n+1\}
           if (inblock_n==ndim) then
             ! in neighbor
             igrid_next=neighbor(1,ix^D,igrid)
@@ -1056,7 +1056,7 @@ contains
             neighbor_child(1,ix^D,igrid)<=max_blocks) then
           call update_block_para(neighbor_child(1,ix^D,igrid),dxb^D,xb^L)
           inblock_nc=0
-          {if (xf1(^D)>=xbmin^D .and. xf1(^D)<=xbmax^D) inblock_nc=inblock_nc+1\}
+          {if (xf1(^D)>=xbmin^D .and. xf1(^D)<xbmax^D) inblock_nc=inblock_nc+1\}
           if (inblock_nc==ndim) then
             ! in neighbor child
             igrid_next=neighbor_child(1,ix^D,igrid)
@@ -1114,7 +1114,7 @@ contains
           grid_nb(j)<=max_blocks) then
         call update_block_para(grid_nb(j),dxb^D,xb^L)
         inblock=0
-        {if (xf1(^D)>=xbmin^D .and. xf1(^D)<=xbmax^D) inblock=inblock+1\}
+        {if (xf1(^D)>=xbmin^D .and. xf1(^D)<xbmax^D) inblock=inblock+1\}
         if (inblock==ndim) then
           igrid_next=grid_nb(j)
           ipe_next=mype
@@ -1134,7 +1134,7 @@ contains
       LOOP1: do iigrid=1,igridstail; igrid=igrids(iigrid);
         call update_block_para(igrid,dxb^D,xb^L)
         inblock=0
-        {if (xf1(^D)>=xbmin^D .and. xf1(^D)<=xbmax^D) inblock=inblock+1\}
+        {if (xf1(^D)>=xbmin^D .and. xf1(^D)<xbmax^D) inblock=inblock+1\}
         if (inblock==ndim) then
           igrid_next=igrid
           ipe_next=mype
