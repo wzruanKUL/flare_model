@@ -200,7 +200,7 @@ contains
 
 
     ! initialize magnetic field lines
-    xRmin2=2.1d0
+    xRmin2=2.0d0
     xRmax2=2.2d0
     xLmin2=-xRmax2
     xLmax2=-xRmin2
@@ -212,7 +212,7 @@ contains
     dFh=dxL(3)
 
     maxh=0.5  ! 5 Mm
-    xW=0.2  ! width of loop in x direction
+    xW=0.4  ! width of loop in x direction
     numX(2)=floor((xRmax2-xRmin2)/dxL(2)+0.5)+1
     numX(3)=floor(maxh/dxL(3)+0.5)
     numX(1)=floor(xW/dxL(1)+0.5)+1
@@ -565,12 +565,14 @@ contains
 
     double precision :: lQgrid(ixI^S),bQgrid(ixI^S)
 
+    integer :: ixO^D
+
     ! add global background heating bQ
     call getbQ(bQgrid,ixI^L,ixO^L,qtC,wCT,x)
     w(ixO^S,e_)=w(ixO^S,e_)+qdt*bQgrid(ixO^S)
 
     !! add localized external heating lQ concentrated at feet of loops
-    if(iprob > 2)then
+    if (iprob > 2)then
       call getlQ(lQgrid,ixI^L,ixO^L,qtC,wCT,x)
       w(ixO^S,e_)=w(ixO^S,e_)+qdt*lQgrid(ixO^S)
     endif
@@ -632,6 +634,7 @@ contains
       if (qt>t_update_Qe) then
         call update_Bfield()
         call get_flare_eflux()
+        call update_region()
         t_update_Qe=t_update_Qe+dt_update_Qe
       endif
     endif
@@ -738,6 +741,10 @@ contains
     else
       F0LT=F0LT*exp(-(qt-tmax)**2/tw2**2)
       F0RT=F0RT*exp(-(qt-tmax)**2/tw2**2)
+    endif
+
+    if (mype==0) then
+      print *, global_time,exp(-(qt-tmax)**2/tw1**2),F0LT(1,1),F0RT(1,1)
     endif
 
     ! update distribution of the energy flux
@@ -1217,21 +1224,22 @@ contains
     lQgrid(ixO^S)=lQgrid(ixO^S)*dsqrt(1/(3.14*lQtw**2))*dexp(-(qt-2.0*lQtw)**2/(lQtw**2))
 
     case(6)
-    lQgrid(ixO^S)=0.0
     {do ixO^DB=ixOmin^DB,ixOmax^DB\}
       flagL=0
       flagR=0
       {if (x(ixO^DD,^D)>=xminL^D .and. x(ixO^DD,^D)<=xmaxL^D) flagL=flagL+1 \}
       {if (x(ixO^DD,^D)>=xminR^D .and. x(ixO^DD,^D)<=xmaxR^D) flagR=flagR+1 \}
-      
+
       ! left foot
       if (flagL==ndim) then
+        lQgrid(ixO^D)=0
         ix3=floor((x(ixO^D,3)-xFL(1^D&,3))/dFh)+1
         call interp_lQ(x(ixO^D,:),lQgrid(ixO^D),xFL(:,:,ix3:ix3+1,:),QeL(:,:,ix3:ix3+1))
       endif
 
       ! right foot
       if (flagR==ndim) then
+        lQgrid(ixO^D)=0
         ix3=floor((x(ixO^D,3)-xFR(1^D&,3))/dFh)+1
         call interp_lQ(x(ixO^D,:),lQgrid(ixO^D),xFR(:,:,ix3:ix3+1,:),QeR(:,:,ix3:ix3+1))
       endif
