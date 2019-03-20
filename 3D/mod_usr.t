@@ -14,7 +14,10 @@ module mod_usr
   double precision, allocatable :: QeL(:^D&),QeR(:^D&)
   double precision, allocatable :: NpL(:^D&),NpR(:^D&)
   double precision :: xW,dFh
+
+  integer :: numXI^D,dxI^D
   double precision :: xmaxL^D,xminL^D,xmaxR^D,xminR^D
+  double precision :: xLI(:^D&,:),xRI(:^D&,:),QeLI(:^D&),QeRI(:^D&)
   double precision, allocatable :: maxhL(:,:),minhL(:,:),maxhR(:,:),minhR(:,:)
 
   double precision :: Ec,Eb,delta_l,delta_u,Ec_erg,Eb_erg,dE,mu0
@@ -126,6 +129,12 @@ contains
 
     allocate(ya(jmax),Ta(jmax),gg(jmax),pa(jmax),ra(jmax))
 
+    !read rho T profiles from txt file
+    if (iprob==2) then
+      call read_init()
+    endif
+
+
     do j=1,jmax
       ya(j)=(dble(j)-0.5d0)*dya-gzone
       if(ya(j)>=htra) then
@@ -192,8 +201,8 @@ contains
     character (20) :: fname
 
     ! heating parameter
-    Fleft=1.1e11    ! energy flux at left footpoint
-    Fright=1.3e11   ! energy flux at right footpoint
+    Fleft=0.5e11    ! energy flux at left footpoint
+    Fright=0.6e11   ! energy flux at right footpoint
     tmax=60/unit_time   ! when flux reach a maximum value
     tw1=30/unit_time    ! time scale for flux increasing before tmax
     tw2=180/unit_time   ! time scale for flux decreasing after tmax
@@ -211,7 +220,7 @@ contains
     enddo
     dFh=dxL(3)
 
-    maxh=0.5  ! 5 Mm
+    maxh=1.0  ! 5 Mm
     xW=0.4  ! width of loop in x direction
     numX(2)=floor((xRmax2-xRmin2)/dxL(2)+0.5)+1
     numX(3)=floor(maxh/dxL(3)+0.5)
@@ -375,6 +384,29 @@ contains
     enddo
 
   end subroutine get_spectra
+
+  subroutine read_init()
+    !read initial rho and T from a txt file
+    use mod_global_parameters
+
+    integer :: ihr, numh, ixr, numx
+
+    open(1, file='solar_init.txt')
+    read(1,*)
+    read(1,*) numx, numh
+    allocate(xr(numx),hr(numh),rhor(numx,numh),Tr(numx,numh),pr(numx,numh))
+
+    do ixr=1,numx
+      read(1,*)
+      read(1,*) xr(ixr)
+      read(1,*)
+      do ihr=1,numh
+        read(1,*) hr(ihr),rhor(ixr,ihr),Tr(ixr,ihr)
+        pr(ixr,ihr)=rhor(ixr,ihr)*Tr(ixr,ihr)
+      end do
+    end do
+    close(1)
+  end subroutine read_init
 
   subroutine initonegrid_usr(ixI^L,ixO^L,w,x)
     ! initialize one grid
@@ -830,18 +862,29 @@ contains
     use mod_usr_methods
     use mod_global_parameters
 
-    integer :: ix^D,flag,flag_sum
+    integer :: ix^D,flag
     logical :: forward
+    integer :: status(mpi_status_size)
+    integer :: ids
 
     !forward=.FALSE.
     !call update_line(xFL(2,5,:,:),NpL(2,5,:),numX3,forward)
 
+    !print *, mype,mod(mype+npe-1,npe),mod(mype+1,npe)
 
+
+    forward=.FALSE.
     do ix1=ixFmin1,ixFmax1
       do ix2=ixFmin2,ixFmax2
-        forward=.FALSE.
+        !call MPI_SEND(mype,1,MPI_INTEGER,mod(mype+1,npe),ix1+ix2,icomm,ierrmpi)
+        !call MPI_RECV(flag,1,MPI_INTEGER,mod(mype+npe-1,npe),ix1+ix2,icomm,status,ierrmpi)
         call update_line(xFL(ix1,ix2,:,:),NpL(ix1,ix2,:),numX3,forward)
-        forward=.TRUE.
+      enddo
+    enddo
+
+    forward=.TRUE.
+    do ix1=ixFmin1,ixFmax1
+      do ix2=ixFmin2,ixFmax2
         call update_line(xFR(ix1,ix2,:,:),NpR(ix1,ix2,:),numX3,forward)
       enddo
     enddo
@@ -873,6 +916,7 @@ contains
 
     ! set processor 0 as main processor
     mainpe=0
+
 
     ! find the grid and pe of the first point
     LOOP1: do iigrid=1,igridstail; igrid=igrids(iigrid);
@@ -918,7 +962,7 @@ contains
       
       ! next point is in another pe, find out grid and pe numbers
       if (newpe .eqv. .TRUE.) then
-        call find_grid(ipe_now,igrid_now,ipe_next,igrid_next,xf(j+1,:))
+        call find_grid(ipe_now,igrid_now,ipe_next,igrid_next,xf(j+1,:),j)
       endif
 
       ! prepare for next point 
@@ -1023,7 +1067,7 @@ contains
     use mod_global_parameters
     use mod_forest
 
-    integer :: igrid,igird_nb,igrid_next,ipe_next
+    integer :: igrid,igrid_next,ipe_next
     double precision :: xf1(ndim)
     double precision :: dxb^D,xb^L
 
@@ -1031,6 +1075,7 @@ contains
     integer :: ix^D
     logical :: newpe
 
+    integer :: igrid_nb,ipe_nb
 
     call update_block_para(igrid,dxb^D,xb^L)
     inblock=0
@@ -1044,29 +1089,30 @@ contains
       ! not in the same grid
       {do ix^D=-1,1,1\}
         ! check neighbor
-        if (mype==neighbor(2,ix^D,igrid) .and. neighbor(1,ix^D,igrid)>0 .and. &
-            neighbor(1,ix^D,igrid)<=max_blocks) then
-          call update_block_para(neighbor(1,ix^D,igrid),dxb^D,xb^L)
+        igrid_nb=neighbor(1,ix^D,igrid)
+        ipe_nb=neighbor(2,ix^D,igrid)
+        if (mype==ipe_nb .and. igrid_inuse(igrid_nb,ipe_nb)) then
+          call update_block_para(igrid_nb,dxb^D,xb^L)
           inblock_n=0
           {if (xf1(^D)>=xbmin^D .and. xf1(^D)<xbmax^D) inblock_n=inblock_n+1\}
           if (inblock_n==ndim) then
             ! in neighbor
-            igrid_next=neighbor(1,ix^D,igrid)
+            igrid_next=igrid_nb
             ipe_next=mype
             newpe=.FALSE.
           endif
         endif
 
         ! check neighbor_child
-        if (mype==neighbor_child(2,ix^D,igrid) .and. & 
-            neighbor_child(1,ix^D,igrid)>0 .and. &
-            neighbor_child(1,ix^D,igrid)<=max_blocks) then
-          call update_block_para(neighbor_child(1,ix^D,igrid),dxb^D,xb^L)
+        igrid_nb=neighbor_child(1,ix^D,igrid)
+        ipe_nb=neighbor_child(2,ix^D,igrid)
+        if (mype==ipe_nb .and. igrid_inuse(igrid_nb,ipe_nb)) then
+          call update_block_para(igrid_nb,dxb^D,xb^L)
           inblock_nc=0
           {if (xf1(^D)>=xbmin^D .and. xf1(^D)<xbmax^D) inblock_nc=inblock_nc+1\}
           if (inblock_nc==ndim) then
             ! in neighbor child
-            igrid_next=neighbor_child(1,ix^D,igrid)
+            igrid_next=igrid_nb
             ipe_next=mype
             newpe=.FALSE.
           endif
@@ -1076,7 +1122,7 @@ contains
 
   end subroutine check_next
 
-  subroutine find_grid(ipe_now,igrid_now,ipe_next,igrid_next,xf1)
+  subroutine find_grid(ipe_now,igrid_now,ipe_next,igrid_next,xf1,nj)
     ! find for grid and pe numbers
     use mod_usr_methods
     use mod_global_parameters
@@ -1088,11 +1134,13 @@ contains
 
     double precision :: dxb^D,xb^L
     integer :: inblock
-    integer :: ix^D,i,j
+    integer :: ix^D,i,j,nj
     integer :: found,found_recv,mainpe
     integer :: status(mpi_status_size)
     integer :: grid_nb(2*(3**ndim)),pe_nb(2*(3**ndim))
-    integer :: numblock
+    integer :: numblock,flag
+
+    double precision :: igrid_nb,ipe_nb
 
     mainpe=0
 
@@ -1113,12 +1161,9 @@ contains
     call MPI_BCAST(grid_nb,numblock,MPI_INTEGER,ipe_now,icomm,ierrmpi)
     call MPI_BCAST(pe_nb,numblock,MPI_INTEGER,ipe_now,icomm,ierrmpi)
 
-
-    found=0
     ! check neighbors
-    do j=1,numblock
-      if (mype==pe_nb(j) .and. grid_nb(j)>0 .and. &
-          grid_nb(j)<=max_blocks) then
+    LOOPNB: do j=1,numblock
+      if (mype==pe_nb(j) .and. igrid_inuse(grid_nb(j),pe_nb(j))) then
         call update_block_para(grid_nb(j),dxb^D,xb^L)
         inblock=0
         {if (xf1(^D)>=xbmin^D .and. xf1(^D)<xbmax^D) inblock=inblock+1\}
@@ -1126,46 +1171,35 @@ contains
           igrid_next=grid_nb(j)
           ipe_next=mype
           found=1
-          call MPI_SEND(igrid_next,1,MPI_INTEGER,mainpe,2,icomm,ierrmpi)
-          call MPI_SEND(ipe_next,1,MPI_INTEGER,mainpe,3,icomm,ierrmpi)
+          call MPI_SEND(j,1,MPI_INTEGER,ipe_now,nj,icomm,ierrmpi)
+          exit LOOPNB
         endif
       endif
-    enddo
+    enddo LOOPNB
 
-    call MPI_ALLREDUCE(found,found_recv,1,MPI_INTEGER,MPI_SUM,icomm,ierrmpi)
-    found=found_recv
+    if (mype==ipe_now) then
+      call MPI_RECV(i,1,MPI_INTEGER,MPI_ANY_SOURCE,nj,icomm,status,ierrmpi)
+      j=i
+    endif
+    call MPI_BCAST(j,1,MPI_INTEGER,ipe_now,icomm,ierrmpi)
+    igrid_next=grid_nb(j)
+    ipe_next=pe_nb(j)
 
 
-    ! point is not in neighbors
-    if (found==0) then
-      LOOP1: do iigrid=1,igridstail; igrid=igrids(iigrid);
-        call update_block_para(igrid,dxb^D,xb^L)
-        inblock=0
-        {if (xf1(^D)>=xbmin^D .and. xf1(^D)<xbmax^D) inblock=inblock+1\}
-        if (inblock==ndim) then
-          igrid_next=igrid
-          ipe_next=mype
-          call MPI_SEND(igrid_next,1,MPI_INTEGER,mainpe,2,icomm,ierrmpi)
-          call MPI_SEND(ipe_next,1,MPI_INTEGER,mainpe,3,icomm,ierrmpi)
-          exit LOOP1
+    if (mype==ipe_next) then
+      call update_block_para(igrid_next,dxb^D,xb^L)
+      if (xf1(1)<xbmin1 .or. xf1(1)>xbmax1 .or. &
+          xf1(2)<xbmin2 .or. xf1(2)>xbmax2 .or. &
+          xf1(3)<xbmin3 .or. xf1(3)>xbmax3) then
+        if (found>0) then
+          print *, 'wrong block is in neighbors in different pe'
+        else
+          print *, 'wrong block is not in neighbors in different pe'
         endif
-      enddo LOOP1
-    endif
-
-    if (mype==mainpe) then
-      call MPI_RECV(igrid_recv,1,MPI_INTEGER,MPI_ANY_SOURCE,2,icomm,status,ierrmpi)
-      call MPI_RECV(ipe_recv,1,MPI_INTEGER,MPI_ANY_SOURCE,3,icomm,status,ierrmpi)
-      igrid_next=igrid_recv
-      ipe_next=ipe_recv
-    endif
-    call MPI_BCAST(igrid_next,1,MPI_INTEGER,mainpe,icomm,ierrmpi)
-    call MPI_BCAST(ipe_next,1,MPI_INTEGER,mainpe,icomm,ierrmpi)
-
-    if (found==0) then
-      if (mype==ipe_next) then
-        print *, 'no found',xf1
-        call update_block_para(igrid_next,dxb^D,xb^L)
+        print *, xf1
         print *, xb^L
+        print *, ipe_next,igrid_next,nj
+        print *, igrid_inuse(igrid_next,ipe_next)
       endif
     endif
 
@@ -1224,26 +1258,26 @@ contains
     lQgrid(ixO^S)=lQgrid(ixO^S)*dsqrt(1/(3.14*lQtw**2))*dexp(-(qt-2.0*lQtw)**2/(lQtw**2))
 
     case(6)
-    {do ixO^DB=ixOmin^DB,ixOmax^DB\}
-      flagL=0
-      flagR=0
-      {if (x(ixO^DD,^D)>=xminL^D .and. x(ixO^DD,^D)<=xmaxL^D) flagL=flagL+1 \}
-      {if (x(ixO^DD,^D)>=xminR^D .and. x(ixO^DD,^D)<=xmaxR^D) flagR=flagR+1 \}
+    !{do ixO^DB=ixOmin^DB,ixOmax^DB\}
+    !  flagL=0
+    !  flagR=0
+    !  {if (x(ixO^DD,^D)>=xminL^D .and. x(ixO^DD,^D)<=xmaxL^D) flagL=flagL+1 \}
+    !  {if (x(ixO^DD,^D)>=xminR^D .and. x(ixO^DD,^D)<=xmaxR^D) flagR=flagR+1 \}
 
-      ! left foot
-      if (flagL==ndim) then
-        lQgrid(ixO^D)=0
-        ix3=floor((x(ixO^D,3)-xFL(1^D&,3))/dFh)+1
-        call interp_lQ(x(ixO^D,:),lQgrid(ixO^D),xFL(:,:,ix3:ix3+1,:),QeL(:,:,ix3:ix3+1))
-      endif
+    !  ! left foot
+    !  if (flagL==ndim) then
+    !    lQgrid(ixO^D)=0
+    !    ix3=floor((x(ixO^D,3)-xFL(1^D&,3))/dFh)+1
+    !    call interp_lQ(x(ixO^D,:),lQgrid(ixO^D),xFL(:,:,ix3:ix3+1,:),QeL(:,:,ix3:ix3+1))
+    !  endif
 
-      ! right foot
-      if (flagR==ndim) then
-        lQgrid(ixO^D)=0
-        ix3=floor((x(ixO^D,3)-xFR(1^D&,3))/dFh)+1
-        call interp_lQ(x(ixO^D,:),lQgrid(ixO^D),xFR(:,:,ix3:ix3+1,:),QeR(:,:,ix3:ix3+1))
-      endif
-    {enddo\}
+    !  ! right foot
+    !  if (flagR==ndim) then
+    !    lQgrid(ixO^D)=0
+    !    ix3=floor((x(ixO^D,3)-xFR(1^D&,3))/dFh)+1
+    !    call interp_lQ(x(ixO^D,:),lQgrid(ixO^D),xFR(:,:,ix3:ix3+1,:),QeR(:,:,ix3:ix3+1))
+    !  endif
+    !{enddo\}
 
     end select
 
