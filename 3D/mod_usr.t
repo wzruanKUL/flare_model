@@ -8,17 +8,13 @@ module mod_usr
   integer, parameter :: jmax=8000
   double precision, allocatable :: xr(:), hr(:),rhor(:,:),Tr(:,:),pr(:,:)
 
-  integer :: numX(ndim),numX^D,ixF^L
-  double precision, allocatable :: xFL(:^D&,:),xFR(:^D&,:)
-  double precision :: dxL(ndim),dxR(ndim)
-  double precision, allocatable :: QeL(:^D&),QeR(:^D&)
-  double precision, allocatable :: NpL(:^D&),NpR(:^D&)
-  double precision :: xW,dFh
+  integer :: numX^D
+  double precision, allocatable :: xLL(:,:,:),xRL(:,:,:)
+  double precision :: dFh
 
-  integer :: numXI^D,dxI^D
-  double precision :: xmaxL^D,xminL^D,xmaxR^D,xminR^D
-  double precision :: xLI(:^D&,:),xRI(:^D&,:),QeLI(:^D&),QeRI(:^D&)
-  double precision, allocatable :: maxhL(:,:),minhL(:,:),maxhR(:,:),minhR(:,:)
+  integer :: numXI^D
+  double precision, allocatable :: dxLI(:,:),dxRI(:,:)
+  double precision, allocatable :: xLI(:^D&,:),xRI(:^D&,:),QeLI(:^D&),QeRI(:^D&)
 
   double precision :: Ec,Eb,delta_l,delta_u,Ec_erg,Eb_erg,dE,mu0
   double precision :: tmax,tw1,tw2,Fleft,Fright
@@ -198,17 +194,20 @@ contains
     double precision :: dtx,tx,au,al,b
     double precision, allocatable :: Bu(:),Bl(:)
 
+    double precision :: xIW1,xIW2,xW
+    double precision :: dxL(ndim),dxR(ndim)
+
     character (20) :: fname
 
     ! heating parameter
     Fleft=0.5e11    ! energy flux at left footpoint
-    Fright=0.6e11   ! energy flux at right footpoint
+    Fright=0.5e11   ! energy flux at right footpoint
     tmax=60/unit_time   ! when flux reach a maximum value
     tw1=30/unit_time    ! time scale for flux increasing before tmax
     tw2=180/unit_time   ! time scale for flux decreasing after tmax
 
 
-    ! initialize magnetic field lines
+    ! initialize root of magnetic field lines
     xRmin2=2.0d0
     xRmax2=2.2d0
     xLmin2=-xRmax2
@@ -220,41 +219,40 @@ contains
     enddo
     dFh=dxL(3)
 
+    dt_update_Qe=dFh/5.0
+    if (mype==0) print *, 'dt_update_Qe',dt_update_Qe
+
     maxh=1.0  ! 5 Mm
-    xW=0.4  ! width of loop in x direction
-    numX(2)=floor((xRmax2-xRmin2)/dxL(2)+0.5)+1
-    numX(3)=floor(maxh/dxL(3)+0.5)
-    numX(1)=floor(xW/dxL(1)+0.5)+1
-    numX1=numX(1)
-    numX2=numX(2)
-    numX3=numX(3)
+    xW=2.0  ! width of loop in x direction
+    numX2=floor((xRmax2-xRmin2)/dxL(2)+0.5)+1
+    numX3=floor(maxh/dxL(3)+0.5)
+    numX1=floor(xW/dxL(1)+0.5)+1
 
-    ixFmin1=1
-    ixFmin2=1
-    ixFmin3=1
-    ixFmax1=numX1
-    ixFmax2=numX2
-    ixFmax3=numX3
-
-    allocate(xFL(numX^D,ndim),xFR(numX^D,ndim))
-    allocate(QeL(numX^D),QeR(numX^D),NpL(numX^D),NpR(numX^D))
-    allocate(maxhL(numX3,2),minhL(numX3,2),maxhR(numX3,2),minhR(numX3,2))
+    allocate(xLL(numX1,numX2,ndim),xRL(numX1,numX2,ndim))
 
     ks=tan(theta)
-    do ix1=ixFmin1,ixFmax1
-      do ix2=ixFmin2,ixFmax2
-        xFL(ix1,ix2,1,2)=xLmin2+(ix2-1)*dxL(2)
-        xFR(ix1,ix2,1,2)=xRmin2+(ix2-1)*dxR(2)
-        xFL(ix1,ix2,1,1)=xFL(ix1,ix2,1,2)*ks-xW/2+ix1*dxL(1)
-        xFR(ix1,ix2,1,1)=xFR(ix1,ix2,1,2)*ks-xW/2+ix1*dxR(1)
-        xFL(ix1,ix2,1,3)=0.0
-        xFR(ix1,ix2,1,3)=0.0
+    do ix1=1,numX1
+      do ix2=1,numX2
+        xLL(ix1,ix2,2)=xLmin2+(ix2-1)*dxL(2)
+        xRL(ix1,ix2,2)=xRmin2+(ix2-1)*dxR(2)
+        xLL(ix1,ix2,1)=xLL(ix1,ix2,2)*ks-xW/2+ix1*dxL(1)
+        xRL(ix1,ix2,1)=xRL(ix1,ix2,2)*ks-xW/2+ix1*dxR(1)
+        xLL(ix1,ix2,3)=0.0
+        xRL(ix1,ix2,3)=0.0
       enddo
     enddo
 
-    QeL=0
-    QeR=0
 
+
+    ! for interpolation
+    numXI1=(numX1-1)*2
+    numXI2=(numX2-1)*2
+    numXI3=numX3
+    
+    allocate(xLI(numXI^D,ndim),xRI(numXI^D,ndim))
+    allocate(QeLI(numXI^D),QeRI(numXI^D))
+    allocate(dxLI(numXI3,2),dxRI(numXI3,2))
+    
 
     ! electron's spectrum [electrons cm^-2 keV-1]
     delta_l=3.0 ! spectral index for E<Eb
@@ -445,6 +443,7 @@ contains
           w(ix^D,p_)=pr(ixr,na)+(res/dhr)*(pr(ixr,na+1)-pr(ixr,na))
         endif
       {end do\}
+      deallocate(xr, hr,rhor,Tr,pr)
     else
       {do ix^DB=ixOmin^DB,ixOmax^DB\}
         na=floor((x(ix^D,3)-xprobmin3+gzone)/dya+0.5d0)
@@ -627,18 +626,14 @@ contains
   subroutine update_block_para(igrid,dxb^D,xb^L)
     ! update parameters of the block
     use mod_global_parameters
+    use mod_forest
 
-    integer          :: ixO^L,ixO^D,j
     integer :: igrid
     double precision :: dxb^D,xb^L
 
-    ^D&ixOmin^D=ixmlo^D\
-    ^D&ixOmax^D=ixmhi^D\
-
     ^D&dxb^D=rnode(rpdx^D_,igrid)\
-
-    ^D&xbmin^D=ps(igrid)%x(ixOmin^DD,^D)-dxb^D/2.0\
-    ^D&xbmax^D=ps(igrid)%x(ixOmax^DD,^D)+dxb^D/2.0\
+    ^D&xbmin^D=rnode(rpxmin^D_,igrid)\
+    ^D&xbmax^D=rnode(rpxmax^D_,igrid)\
 
   end subroutine update_block_para
 
@@ -652,10 +647,22 @@ contains
     integer :: ix^D
     double precision :: t1,t2,t3
 
+    double precision :: xFL(numX1,numX2,numX3,ndim),xFR(numX1,numX2,numX3,ndim)
+    double precision :: QeL(numX1,numX2,numX3),QeR(numX1,numX2,numX3)
+    double precision :: NpL(numX1,numX2,numX3),NpR(numX1,numX2,numX3)
+
+    QeL=0
+    QeR=0
+    NpL=0
+    NpR=0
+
     if (convert) then
-      call update_Bfield()
-      call get_flare_eflux()
-      call update_region()
+      t1=mpi_wtime()
+      call update_Bfield(xFL,xFR,QeL,QeR,NpL,NpR)
+      call get_flare_eflux(xFL,xFR,QeL,QeR,NpL,NpR)
+      call update_region(xFL,xFR,QeL,QeR,NpL,NpR)
+      t2=mpi_wtime()
+      if (mype==0) print *, iit,t2-t1
     endif
 
     if (iprob>=6) then
@@ -664,28 +671,36 @@ contains
       endif
 
       if (qt>t_update_Qe) then
-        call update_Bfield()
-        call get_flare_eflux()
-        call update_region()
+        t1=mpi_wtime()
+        call update_Bfield(xFL,xFR,QeL,QeR,NpL,NpR)
+        call get_flare_eflux(xFL,xFR,QeL,QeR,NpL,NpR)
+        call update_region(xFL,xFR,QeL,QeR,NpL,NpR)
         t_update_Qe=t_update_Qe+dt_update_Qe
+        t2=mpi_wtime()
+        if (mype==0) print *, iit,t2-t1
       endif
     endif
 
   end subroutine special_global
 
-  subroutine update_region()
+  subroutine update_region(xFL,xFR,QeL,QeR,NpL,NpR)
     ! update parameters that are helpful to find heating region
     use mod_global_parameters
 
-    integer :: ix^D
+    double precision :: xFL(numX1,numX2,numX3,ndim),xFR(numX1,numX2,numX3,ndim)
+    double precision :: QeL(numX1,numX2,numX3),QeR(numX1,numX2,numX3)
+    double precision :: NpL(numX1,numX2,numX3),NpR(numX1,numX2,numX3)
+
+    integer :: ix^D,ipe,numXY
     double precision :: maxx1,maxx2,minx1,minx2
+    character(len=30)   :: filename
+
+    double precision :: xc(ndim)
+
+    double precision :: maxhL(numX3,2),minhL(numX3,2),maxhR(numX3,2),minhR(numX3,2)
+
 
     !left foot
-    xmaxL1=xFL(1,1,1,1)
-    xminL1=xFL(1,1,1,1)
-    xmaxL2=xFL(1,1,1,2)
-    xminL2=xFL(1,1,1,2)
-
     do ix3=1,numX3
       maxx1=xFL(1,1,ix3,1)
       maxx2=xFL(1,1,ix3,2)
@@ -705,20 +720,10 @@ contains
       maxhL(ix3,2)=maxx2
       minhL(ix3,1)=minx1
       minhL(ix3,2)=minx2
-
-      if (maxx1>xmaxL1) xmaxL1=maxx1
-      if (maxx2>xmaxL2) xmaxL2=maxx2
-      if (minx1<xminL1) xminL1=minx1
-      if (minx2<xminL2) xminL2=minx2
     enddo    
 
 
     !right foot
-    xmaxR1=xFR(1,1,1,1)
-    xminR1=xFR(1,1,1,1)
-    xmaxR2=xFR(1,1,1,2)
-    xminR2=xFR(1,1,1,2)
-
     do ix3=1,numX3
       maxx1=xFR(1,1,ix3,1)
       maxx2=xFR(1,1,ix3,2)
@@ -738,23 +743,247 @@ contains
       maxhR(ix3,2)=maxx2
       minhR(ix3,1)=minx1
       minhR(ix3,2)=minx2
-
-      if (maxx1>xmaxR1) xmaxR1=maxx1
-      if (maxx2>xmaxR2) xmaxR2=maxx2
-      if (minx1<xminR1) xminR1=minx1
-      if (minx2<xminR2) xminR2=minx2
     enddo    
 
-    xminL3=xFL(1,1,1,3)
-    xminR3=xFR(1,1,1,3)
-    xmaxL3=xFL(1,1,numX3,3)
-    xmaxR3=xFR(1,1,numX3,3)
+
+    ! initialize heating box
+    do ix3=1,numXI3      
+      dxLI(ix3,1)=(maxhL(ix3,1)-minhL(ix3,1))/(numXI1-1)
+      dxLI(ix3,2)=(maxhL(ix3,2)-minhL(ix3,2))/(numXI2-1)
+
+      dxRI(ix3,1)=(maxhR(ix3,1)-minhR(ix3,1))/(numXI1-1)
+      dxRI(ix3,2)=(maxhR(ix3,2)-minhR(ix3,2))/(numXI2-1)
+
+      do ix1=1,numXI1
+        do ix2=1,numXI2
+          xLI(ix^D,1)=minhL(ix3,1)+(ix1-1.0)*dxLI(ix3,1)
+          xLI(ix^D,2)=minhL(ix3,2)+(ix2-1.0)*dxLI(ix3,2)
+          xLI(ix^D,3)=xFL(1,1,ix3,3)
+
+          xRI(ix^D,1)=minhR(ix3,1)+(ix1-1.0)*dxRI(ix3,1)
+          xRI(ix^D,2)=minhR(ix3,2)+(ix2-1.0)*dxRI(ix3,2)
+          xRI(ix^D,3)=xFR(1,1,ix3,3)
+        enddo
+      enddo
+    enddo
+
+    
+    !{do ix^DB=1,numX^DB\}
+    !  if (isnan(QeL(ix^D)) .and. mype==0) print *, xFL(ix^D,:),QeL(ix^D)
+    !{enddo\}
+
+
+    QeLI=0
+    QeRI=0
+    ! interpolation to get local heating
+    !{do ix^DB=1,numXI^DB\}
+    !  ipe=mod(ix3,npe)
+    !  if (mype==ipe) then
+    !    call Interp_Qe(xLI(ix^D,:),QeLI(ix^D),xFL(:,:,ix3,1:2),QeL(:,:,ix3))
+    !    call Interp_Qe(xRI(ix^D,:),QeRI(ix^D),xFR(:,:,ix3,1:2),QeR(:,:,ix3))
+    !  endif
+    !  !call MPI_BCAST(QeLI(ix^D),1,MPI_DOUBLE_PRECISION,ipe,icomm,ierrmpi)
+    !  !call MPI_BCAST(QeRI(ix^D),1,MPI_DOUBLE_PRECISION,ipe,icomm,ierrmpi)
+    !{enddo\}
+
+    do ix3=1,numXI3
+      ipe=mod(ix3,npe)
+      if (mype==ipe) then
+        do ix1=1,numXI1
+          do ix2=1,numXI2
+            call Interp_Qe(xLI(ix^D,:),QeLI(ix^D),xFL(:,:,ix3,1:2),QeL(:,:,ix3))
+            call Interp_Qe(xRI(ix^D,:),QeRI(ix^D),xFR(:,:,ix3,1:2),QeR(:,:,ix3))
+          enddo
+        enddo
+      endif
+    enddo
+
+    numXY=numXI1*numXI2
+    do ix3=1,numXI3
+      ipe=mod(ix3,npe)
+      call MPI_BCAST(QeLI(:,:,ix3),numXY,MPI_DOUBLE_PRECISION,ipe,icomm,ierrmpi)
+      call MPI_BCAST(QeRI(:,:,ix3),numXY,MPI_DOUBLE_PRECISION,ipe,icomm,ierrmpi)
+    enddo
+
+
+    !if (mype==0) then
+    !  filename='interp_box.txt'
+    !  open(1,file=filename)
+    !  write(1,*) global_time
+    !  write(1,*) numXI^D  
+    !  write(1,*) 'xL yL zL xR yR zR QeL QeR'
+    !  {do ix^D=1,numXI^D \}
+    !    write(1,'(e15.7, e15.7, e15.7, e15.7, e15.7, e15.7, e15.7, e15.7)') &
+    !    {xLI(ix^DD,^D),},{xRI(ix^DD,^D),},QeLI(ix^D),QeRI(ix^D)
+    !  {enddo \}
+    !  close(1)
+    !endif
 
   end subroutine update_region
 
-  subroutine get_flare_eflux()
+  subroutine Interp_Qe(xc,lQc,xi,Qi)
+    ! get the heating of a cell via interpolation
+    use mod_global_parameters
+
+    double precision :: xc(ndim),lQc
+    double precision :: xi(numX1,numX2,2),Qi(numX1,numX2)
+    integer :: ix^D
+    double precision :: xd3,x1n(2,2),x2n(2,2),xdn(2,2),Qn(2,2),dn
+    double precision :: dyl,dyr,dxm
+    double precision :: xil(2),xir(2),Ql,Qr
+
+    logical :: heating
+    integer :: timesL,timesR,t0,t1,t2,t3
+    integer :: factor
+    double precision :: di(numX1,numX2),lambdai(numX1,numX2)    
+
+    double precision :: Dii(2,2),sumDii,logQe
+
+
+    lQc=0
+
+    ! check whether or not given point is in heating region
+    ! left across times
+    call get_across_time(xc,xi(1,:,1:2),numX2,0,t0)
+    call get_across_time(xc,xi(numX1,:,1:2),numX2,0,t1)
+    call get_across_time(xc,xi(:,1,1:2),numX1,0,t2)
+    call get_across_time(xc,xi(:,numX2,1:2),numX1,0,t3)
+    timesL=t0+t1+t2+t3
+    ! right across times
+    call get_across_time(xc,xi(1,:,1:2),numX2,1,t0)
+    call get_across_time(xc,xi(numX1,:,1:2),numX2,1,t1)
+    call get_across_time(xc,xi(:,1,1:2),numX1,1,t2)
+    call get_across_time(xc,xi(:,numX2,1:2),numX1,1,t3)
+    timesR=t0+t1+t2+t3
+
+
+    if (mod(timesL,2)==1 .and. mod(timesR,2)==1) then
+      heating=.true.
+    else
+      heating=.false.
+    endif
+
+
+
+    ! if given point is in heating region, do interpolation based on distance
+    factor=-3
+    if (heating .eqv. .true.) then
+      ! looking for nearby points to do interpolation
+      x1n(:,:)=xi(1,1,1)
+      x2n(:,:)=xi(1,1,2)
+      xdn=8.0*dFh
+      Qn=0
+
+      do ix1=1,numX1
+        do ix2=1,numX2
+          dn=sqrt((xi(ix1,ix2,1)-xc(1))**2 + (xi(ix1,ix2,2)-xc(2))**2)
+          ! lower left
+          if (xi(ix1,ix2,1)<=xc(1) .and. xi(ix1,ix2,2)<=xc(2) .and. &
+              dn<xdn(1,1)) then
+            x1n(1,1)=xi(ix1,ix2,1)
+            x2n(1,1)=xi(ix1,ix2,2)
+            Qn(1,1)=Qi(ix1,ix2)
+            xdn(1,1)=dn
+          endif
+          ! lower right
+          if (xi(ix1,ix2,1)>=xc(1) .and. xi(ix1,ix2,2)<=xc(2) .and. &
+              dn<xdn(2,1)) then
+            x1n(2,1)=xi(ix1,ix2,1)
+            x2n(2,1)=xi(ix1,ix2,2)
+            Qn(2,1)=Qi(ix1,ix2)
+            xdn(2,1)=dn
+          endif
+          ! upper left
+          if (xi(ix1,ix2,1)<=xc(1) .and. xi(ix1,ix2,2)>=xc(2) .and. &
+              dn<xdn(1,2)) then
+            x1n(1,2)=xi(ix1,ix2,1)
+            x2n(1,2)=xi(ix1,ix2,2)
+            Qn(1,2)=Qi(ix1,ix2)
+            xdn(1,2)=dn
+          endif
+          ! upper left
+          if (xi(ix1,ix2,1)>=xc(1) .and. xi(ix1,ix2,2)>=xc(2) .and. &
+              dn<xdn(2,2)) then
+            x1n(2,2)=xi(ix1,ix2,1)
+            x2n(2,2)=xi(ix1,ix2,2)
+            Qn(2,2)=Qi(ix1,ix2)
+            xdn(2,2)=dn
+          endif
+        enddo
+      enddo
+
+      ! interpolation
+      if (sum(Qn)>0) then
+        Dii=0
+
+        do ix1=1,2
+          do ix2=1,2
+            if (Qn(ix1,ix2)==0) then
+              Dii(ix1,ix2)=0
+            else if (xdn(ix1,ix2)==0) then
+              Dii(ix1,ix2)=1.0e18
+            else
+              Dii(ix1,ix2)=(xdn(ix1,ix2))**factor
+            endif
+          enddo
+        enddo
+
+        sumDii=sum(Dii)
+        Dii=Dii/sumDii
+        logQe=0
+        
+        do ix1=1,2
+          do ix2=1,2
+            lQc=lQc+Qn(ix1,ix2)*Dii(ix1,ix2)
+          enddo
+        enddo
+      endif
+
+    endif
+
+   ! if (isnan(lQc) .and. mype==0) print *, Qn,Dii
+
+  end subroutine interp_Qe
+
+  subroutine get_across_time(xc,curve,numc,LR,times)
+    ! calculate that how many times that a parallel or a perpendicular
+    ! line intersect a curve on the left of the given point
+    ! given point xc is in the line.
+    ! LR==0: left across
+    ! LR==1: right across
+    use mod_global_parameters
+
+    integer :: numc,times,j,LR
+    double precision :: xc(ndim),curve(numc,2)
+    double precision :: dl,xit
+    
+    times=0
+
+    do j=1,numc-1
+      if (curve(j,2)<=xc(2) .and. curve(j+1,2)>xc(2)) then
+        dl=(xc(2)-curve(j,2))/(curve(j+1,2)-curve(j,2))
+        xit=curve(j,1)*(1.0-dl)+curve(j+1,1)*dl
+        if (xit<=xc(1) .and. LR==0) times=times+1
+        if (xit>=xc(1) .and. LR==1) times=times+1
+      endif
+
+      if (curve(j,2)>=xc(2) .and. curve(j+1,2)<xc(2)) then
+        dl=(xc(2)-curve(j+1,2))/(curve(j,2)-curve(j+1,2))
+        xit=curve(j+1,1)*(1.0-dl)+curve(j,1)*dl
+        if (xit<=xc(1) .and. LR==0) times=times+1
+        if (xit>=xc(1) .and. LR==1) times=times+1
+      endif
+    enddo
+
+  end subroutine get_across_time
+
+  subroutine get_flare_eflux(xFL,xFR,QeL,QeR,NpL,NpR)
     ! calculate electron deposit energy flux
     use mod_global_parameters
+
+    double precision :: xFL(numX1,numX2,numX3,ndim),xFR(numX1,numX2,numX3,ndim)
+    double precision :: QeL(numX1,numX2,numX3),QeR(numX1,numX2,numX3)
+    double precision :: NpL(numX1,numX2,numX3),NpR(numX1,numX2,numX3)
 
     integer          :: ixO^L,ixO^D,j
 
@@ -775,13 +1004,10 @@ contains
       F0RT=F0RT*exp(-(qt-tmax)**2/tw2**2)
     endif
 
-    if (mype==0) then
-      print *, global_time,exp(-(qt-tmax)**2/tw1**2),F0LT(1,1),F0RT(1,1)
-    endif
 
     ! update distribution of the energy flux
-    call update_e_distr(xFL,QeL,1)
-    call update_e_distr(xFR,QeR,2)
+    call update_e_distr(xFL,QeL,NpL)
+    call update_e_distr(xFR,QeR,NpR)
 
     do ix1=1,numX1
       do ix2=1,numX2
@@ -792,7 +1018,7 @@ contains
 
   end subroutine get_flare_eflux
 
-  subroutine update_e_distr(xLR,QeLR,iLR)
+  subroutine update_e_distr(xLR,QeLR,Np)
     ! calculate electron deposit energy flux
     use mod_global_parameters
 
@@ -805,13 +1031,6 @@ contains
     integer :: ix^D
     double precision :: sumQe
     integer :: iLR,iNlog
-
-
-    if (iLR==1) then
-      Np=NpL
-    else
-      Np=NpR
-    endif
 
 
     ! column depth along field lines
@@ -857,34 +1076,31 @@ contains
 
   end subroutine update_e_distr
 
-  subroutine update_Bfield()
+  subroutine update_Bfield(xFL,xFR,QeL,QeR,NpL,NpR)
     ! update the location of mangetic field lines
     use mod_usr_methods
     use mod_global_parameters
 
+    double precision :: xFL(numX1,numX2,numX3,ndim),xFR(numX1,numX2,numX3,ndim)
+    double precision :: QeL(numX1,numX2,numX3),QeR(numX1,numX2,numX3)
+    double precision :: NpL(numX1,numX2,numX3),NpR(numX1,numX2,numX3)
+
     integer :: ix^D,flag
     logical :: forward
     integer :: status(mpi_status_size)
-    integer :: ids
-
-    !forward=.FALSE.
-    !call update_line(xFL(2,5,:,:),NpL(2,5,:),numX3,forward)
-
-    !print *, mype,mod(mype+npe-1,npe),mod(mype+1,npe)
-
 
     forward=.FALSE.
-    do ix1=ixFmin1,ixFmax1
-      do ix2=ixFmin2,ixFmax2
-        !call MPI_SEND(mype,1,MPI_INTEGER,mod(mype+1,npe),ix1+ix2,icomm,ierrmpi)
-        !call MPI_RECV(flag,1,MPI_INTEGER,mod(mype+npe-1,npe),ix1+ix2,icomm,status,ierrmpi)
+    do ix1=1,numX1
+      do ix2=1,numX2
+        xFL(ix1,ix2,1,:)=xLL(ix1,ix2,:)
         call update_line(xFL(ix1,ix2,:,:),NpL(ix1,ix2,:),numX3,forward)
       enddo
     enddo
 
     forward=.TRUE.
-    do ix1=ixFmin1,ixFmax1
-      do ix2=ixFmin2,ixFmax2
+    do ix1=1,numX1
+      do ix2=1,numX2
+        xFR(ix1,ix2,1,:)=xRL(ix1,ix2,:)
         call update_line(xFR(ix1,ix2,:,:),NpR(ix1,ix2,:),numX3,forward)
       enddo
     enddo
@@ -920,7 +1136,9 @@ contains
 
     ! find the grid and pe of the first point
     LOOP1: do iigrid=1,igridstail; igrid=igrids(iigrid);
-      call update_block_para(igrid,dxb^D,xb^L)
+      !call update_block_para(igrid,dxb^D,xb^L)
+      ^D&xbmin^D=rnode(rpxmin^D_,igrid)\
+      ^D&xbmax^D=rnode(rpxmax^D_,igrid)\
       inblock=0
       {if (xf(1,^DB)>=xbmin^DB .and. xf(1,^DB)<xbmax^DB) inblock=inblock+1\}
       if (inblock==ndim) then
@@ -928,6 +1146,7 @@ contains
         ipe_now=mype
         call MPI_SEND(igrid_now,1,MPI_INTEGER,mainpe,0,icomm,ierrmpi)
         call MPI_SEND(ipe_now,1,MPI_INTEGER,mainpe,1,icomm,ierrmpi)
+        !if (global_time>0) print *, xf(1,:),xb^L
         exit LOOP1
       endif
     enddo LOOP1
@@ -941,6 +1160,10 @@ contains
     call MPI_BCAST(igrid_now,1,MPI_INTEGER,mainpe,icomm,ierrmpi)
     call MPI_BCAST(ipe_now,1,MPI_INTEGER,mainpe,icomm,ierrmpi)
 
+    !if (mype==ipe_now .and. global_time>0) then
+    !  call update_block_para(igrid_now,dxb^D,xb^L)
+    !  print *, xb^L
+    !endif
 
     ! other points in field line    
     j=1
@@ -962,7 +1185,9 @@ contains
       
       ! next point is in another pe, find out grid and pe numbers
       if (newpe .eqv. .TRUE.) then
+        !if (mype==0 .and. global_time>0) print *, j,'in'
         call find_grid(ipe_now,igrid_now,ipe_next,igrid_next,xf(j+1,:),j)
+        !if (mype==0 .and. global_time>0) print *, j,'out'
       endif
 
       ! prepare for next point 
@@ -976,8 +1201,8 @@ contains
       endif
       j=j+1
     enddo
- 
 
+ 
     ! find the density for the last point
     if (j==numP) then
       mainpe=ipe_now
@@ -993,6 +1218,7 @@ contains
     !find next point
     use mod_usr_methods
     use mod_global_parameters
+    use mod_forest
 
     integer :: igrid
     logical :: forward
@@ -1005,10 +1231,17 @@ contains
     double precision :: Bnear(0:1^D&,ndim),Nnear(0:1^D&)
     double precision :: Bx(ndim),factor(0:1^D&)
 
+
+
+
     ^D&ixOmin^D=ixmlo^D\
     ^D&ixOmax^D=ixmhi^D\
 
-    call update_block_para(igrid,dxb^D,xb^L)
+    ^D&dxb^D=rnode(rpdx^D_,igrid)\
+    ^D&xbmin^D=rnode(rpxmin^D_,igrid)\
+    ^D&xbmax^D=rnode(rpxmax^D_,igrid)\
+
+    !call update_block_para(igrid,dxb^D,xb^L)
 
     ^D&ixbl^D=floor((xf0(^D)-ps(igrid)%x(ixOmin^DD,^D))/dxb^D)+ixOmin^D\
     ^D&xd^D=(xf0(^D)-ps(igrid)%x(ixbl^DD,^D))/dxb^D\
@@ -1020,6 +1253,7 @@ contains
         do j=1,ndim
           Bnear(ix^D,j)=ps(igrid)%w(ixbl^D+ix^D,mag(j))+&
                         ps(igrid)%B0(ixbl^D+ix^D,j,0)
+          !Bnear(ix^D,j)=ps(igrid)%B0(ixbl^D+ix^D,j,0)
         enddo
         Nnear(ix^D)=ps(igrid)%w(ixbl^D+ix^D,rho_)
       {enddo\}
@@ -1059,6 +1293,21 @@ contains
       xf1(j)=xf0(j)+dxf(j)
     enddo
 
+    !if (global_time>0) then
+    !  print *, igrid_inuse(igrid,mype)
+    !  print *, xf0
+    !  print *, ixbl^D
+    !  !print *, ps(igrid)%x
+    !  
+    !  print *, ps(igrid)%w(3,3,3,rho_)
+    !  print *, ps(igrid)%w(3,3,3,mag(:))
+
+    !  !print *, ps(igrid)%B0(:,:,:,1,0)
+    !  !{do ix^DB=0,1\}
+    !  !  print *, ixbl^D+ix^D,ps(igrid)%w(ixbl^D+ix^D,mag(:))
+    !  !{enddo\}
+    !endif
+
   end subroutine find_next
 
   subroutine check_next(igrid,igrid_next,ipe_next,xf1,newpe)
@@ -1077,7 +1326,10 @@ contains
 
     integer :: igrid_nb,ipe_nb
 
-    call update_block_para(igrid,dxb^D,xb^L)
+    !call update_block_para(igrid,dxb^D,xb^L)
+
+    ^D&xbmin^D=rnode(rpxmin^D_,igrid)\
+    ^D&xbmax^D=rnode(rpxmax^D_,igrid)\
     inblock=0
     {if (xf1(^D)>=xbmin^D .and. xf1(^D)<xbmax^D) inblock=inblock+1\}
     if (inblock==ndim) then
@@ -1091,8 +1343,11 @@ contains
         ! check neighbor
         igrid_nb=neighbor(1,ix^D,igrid)
         ipe_nb=neighbor(2,ix^D,igrid)
-        if (mype==ipe_nb .and. igrid_inuse(igrid_nb,ipe_nb)) then
-          call update_block_para(igrid_nb,dxb^D,xb^L)
+        if (mype==ipe_nb .and. igrid_inuse(igrid_nb,ipe_nb) .and. &
+            igrid_nb>=0 .and. igrid_nb<=max_blocks) then
+          !call update_block_para(igrid_nb,dxb^D,xb^L)
+          ^D&xbmin^D=rnode(rpxmin^D_,igrid_nb)\
+          ^D&xbmax^D=rnode(rpxmax^D_,igrid_nb)\
           inblock_n=0
           {if (xf1(^D)>=xbmin^D .and. xf1(^D)<xbmax^D) inblock_n=inblock_n+1\}
           if (inblock_n==ndim) then
@@ -1106,8 +1361,12 @@ contains
         ! check neighbor_child
         igrid_nb=neighbor_child(1,ix^D,igrid)
         ipe_nb=neighbor_child(2,ix^D,igrid)
-        if (mype==ipe_nb .and. igrid_inuse(igrid_nb,ipe_nb)) then
-          call update_block_para(igrid_nb,dxb^D,xb^L)
+        !if (mype==ipe_nb .and. igrid_inuse(igrid_nb,ipe_nb)) then
+        if (mype==ipe_nb .and. igrid_inuse(igrid_nb,ipe_nb) .and. &
+            igrid_nb>=0 .and. igrid_nb<=max_blocks) then
+          !call update_block_para(igrid_nb,dxb^D,xb^L)
+          ^D&xbmin^D=rnode(rpxmin^D_,igrid_nb)\
+          ^D&xbmax^D=rnode(rpxmax^D_,igrid_nb)\
           inblock_nc=0
           {if (xf1(^D)>=xbmin^D .and. xf1(^D)<xbmax^D) inblock_nc=inblock_nc+1\}
           if (inblock_nc==ndim) then
@@ -1142,7 +1401,12 @@ contains
 
     double precision :: igrid_nb,ipe_nb
 
+    integer          :: ixO^L,ixO^D
+
+
     mainpe=0
+
+    found=0
 
     numblock=2*(3**ndim)
 
@@ -1163,31 +1427,71 @@ contains
 
     ! check neighbors
     LOOPNB: do j=1,numblock
-      if (mype==pe_nb(j) .and. igrid_inuse(grid_nb(j),pe_nb(j))) then
-        call update_block_para(grid_nb(j),dxb^D,xb^L)
+      if (mype==pe_nb(j) .and. igrid_inuse(grid_nb(j),pe_nb(j)) .and. &
+          grid_nb(j)>=0 .and. grid_nb(j)<=max_blocks) then
+        !call update_block_para(grid_nb(j),dxb^D,xb^L)
+        ^D&xbmin^D=rnode(rpxmin^D_,grid_nb(j))\
+        ^D&xbmax^D=rnode(rpxmax^D_,grid_nb(j))\
         inblock=0
         {if (xf1(^D)>=xbmin^D .and. xf1(^D)<xbmax^D) inblock=inblock+1\}
         if (inblock==ndim) then
           igrid_next=grid_nb(j)
           ipe_next=mype
           found=1
-          call MPI_SEND(j,1,MPI_INTEGER,ipe_now,nj,icomm,ierrmpi)
+          !call MPI_SEND(j,1,MPI_INTEGER,ipe_now,nj,icomm,ierrmpi)
+          call MPI_SEND(igrid_next,1,MPI_INTEGER,ipe_now,nj+10,icomm,ierrmpi)
+          call MPI_SEND(ipe_next,1,MPI_INTEGER,ipe_now,nj+11,icomm,ierrmpi)
           exit LOOPNB
         endif
       endif
     enddo LOOPNB
 
-    if (mype==ipe_now) then
-      call MPI_RECV(i,1,MPI_INTEGER,MPI_ANY_SOURCE,nj,icomm,status,ierrmpi)
-      j=i
+    call MPI_ALLREDUCE(found,found_recv,1,MPI_INTEGER,MPI_SUM,icomm,ierrmpi)
+    found=found_recv
+
+
+    ! point is not in neighbors
+    if (found==0) then
+      LOOP1: do iigrid=1,igridstail; igrid=igrids(iigrid);
+        !call update_block_para(igrid,dxb^D,xb^L)
+        ^D&xbmin^D=rnode(rpxmin^D_,igrid)\
+        ^D&xbmax^D=rnode(rpxmax^D_,igrid)\
+        inblock=0
+        {if (xf1(^D)>=xbmin^D .and. xf1(^D)<xbmax^D) inblock=inblock+1\}
+        if (inblock==ndim) then
+          igrid_next=igrid
+          ipe_next=mype
+          call MPI_SEND(igrid_next,1,MPI_INTEGER,ipe_now,nj+10,icomm,ierrmpi)
+          call MPI_SEND(ipe_next,1,MPI_INTEGER,ipe_now,nj+11,icomm,ierrmpi)
+          exit LOOP1
+        endif
+      enddo LOOP1
     endif
-    call MPI_BCAST(j,1,MPI_INTEGER,ipe_now,icomm,ierrmpi)
-    igrid_next=grid_nb(j)
-    ipe_next=pe_nb(j)
+
+
+    if (mype==ipe_now) then
+      call MPI_RECV(igrid_recv,1,MPI_INTEGER,MPI_ANY_SOURCE,nj+10,icomm,status,ierrmpi)
+      call MPI_RECV(ipe_recv,1,MPI_INTEGER,MPI_ANY_SOURCE,nj+11,icomm,status,ierrmpi)
+      igrid_next=igrid_recv
+      ipe_next=ipe_recv
+    endif
+    call MPI_BCAST(igrid_next,1,MPI_INTEGER,ipe_now,icomm,ierrmpi)
+    call MPI_BCAST(ipe_next,1,MPI_INTEGER,ipe_now,icomm,ierrmpi)
+
+
+    !if (mype==ipe_now) then
+    !  call MPI_RECV(i,1,MPI_INTEGER,MPI_ANY_SOURCE,nj,icomm,status,ierrmpi)
+    !  j=i
+    !endif
+    !call MPI_BCAST(j,1,MPI_INTEGER,ipe_now,icomm,ierrmpi)
+    !igrid_next=grid_nb(j)
+    !ipe_next=pe_nb(j)
 
 
     if (mype==ipe_next) then
-      call update_block_para(igrid_next,dxb^D,xb^L)
+      !call update_block_para(igrid_next,dxb^D,xb^L)
+      ^D&xbmin^D=rnode(rpxmin^D_,igrid_next)\
+      ^D&xbmax^D=rnode(rpxmax^D_,igrid_next)\
       if (xf1(1)<xbmin1 .or. xf1(1)>xbmax1 .or. &
           xf1(2)<xbmin2 .or. xf1(2)>xbmax2 .or. &
           xf1(3)<xbmin3 .or. xf1(3)>xbmax3) then
@@ -1258,26 +1562,31 @@ contains
     lQgrid(ixO^S)=lQgrid(ixO^S)*dsqrt(1/(3.14*lQtw**2))*dexp(-(qt-2.0*lQtw)**2/(lQtw**2))
 
     case(6)
-    !{do ixO^DB=ixOmin^DB,ixOmax^DB\}
-    !  flagL=0
-    !  flagR=0
-    !  {if (x(ixO^DD,^D)>=xminL^D .and. x(ixO^DD,^D)<=xmaxL^D) flagL=flagL+1 \}
-    !  {if (x(ixO^DD,^D)>=xminR^D .and. x(ixO^DD,^D)<=xmaxR^D) flagR=flagR+1 \}
+    lQgrid(ixO^S)=0
+    {do ixO^DB=ixOmin^DB,ixOmax^DB\}
+      ix3=floor((x(ixO^D,3)-xLI(1,1,1,3))/dFh+0.5)
 
-    !  ! left foot
-    !  if (flagL==ndim) then
-    !    lQgrid(ixO^D)=0
-    !    ix3=floor((x(ixO^D,3)-xFL(1^D&,3))/dFh)+1
-    !    call interp_lQ(x(ixO^D,:),lQgrid(ixO^D),xFL(:,:,ix3:ix3+1,:),QeL(:,:,ix3:ix3+1))
-    !  endif
+      ! left footpoint
+      if (ix3>=1 .and. ix3<=numXI3 .and. x(ixO^D,2)<0) then
+        ix1=floor((x(ixO^D,1)-xLI(1,1,ix3,1))/dxLI(ix3,1)+0.5)+1
+        ix2=floor((x(ixO^D,2)-xLI(1,1,ix3,2))/dxLI(ix3,2)+0.5)+1
+        if (ix1>=1 .and. ix1<=numXI1 .and. ix2>=1 .and. ix2<=numXI2) then
+          lQgrid(ixO^D)=QeLI(ix^D)
+          if(isnan(lQgrid(ixO^D))) print *, 'NAN', ix^D,numXI^D,QeLI(ix^D)
+        endif
+      endif
 
-    !  ! right foot
-    !  if (flagR==ndim) then
-    !    lQgrid(ixO^D)=0
-    !    ix3=floor((x(ixO^D,3)-xFR(1^D&,3))/dFh)+1
-    !    call interp_lQ(x(ixO^D,:),lQgrid(ixO^D),xFR(:,:,ix3:ix3+1,:),QeR(:,:,ix3:ix3+1))
-    !  endif
-    !{enddo\}
+      ! right footpoint
+      if (ix3>=1 .and. ix3<=numXI3 .and. x(ixO^D,2)>0) then
+        ix1=floor((x(ixO^D,1)-xRI(1,1,ix3,1))/dxRI(ix3,1)+0.5)+1
+        ix2=floor((x(ixO^D,2)-xRI(1,1,ix3,2))/dxRI(ix3,2)+0.5)+1
+        if (ix1>=1 .and. ix1<=numXI1 .and. ix2>=1 .and. ix2<=numXI2) then
+          lQgrid(ixO^D)=QeRI(ix^D)
+          if(isnan(lQgrid(ixO^D))) print *, 'NAN', ix^D,numXI^D,QeRI(ix^D)
+        endif
+      endif
+
+    {enddo\}
 
     end select
 
@@ -1285,91 +1594,6 @@ contains
 
   end subroutine getlQ
 
-  subroutine interp_lQ(xc,lQc,xLR,QeLR)
-    ! get the heating of a cell via interpolation
-    use mod_global_parameters
-
-    double precision :: xc(ndim),lQc
-    double precision :: xLR(numX1,numX2,2,ndim),QeLR(numX1,numX2,2)
-    double precision :: xi(numX1,numX2,2),Qi(numX1,numX2)
-    integer :: ix^D
-    double precision :: xd3,x1n(2,2),x2n(2,2),xdn(2,2),Qn(2,2),dn
-    double precision :: dyl,dyr,dxm
-    double precision :: xil(2),xir(2),Ql,Qr
-
-    ! interplot for z 
-    xd3=(xc(3)-xLR(1,1,1,3))/dFh
-    do ix1=1,numX1
-      do ix2=1,numX2
-        xi(ix1,ix2,1)=XLR(ix1,ix2,1,1)*(1-xd3)+XLR(ix1,ix2,2,1)*xd3
-        xi(ix1,ix2,2)=XLR(ix1,ix2,1,2)*(1-xd3)+XLR(ix1,ix2,2,2)*xd3
-        Qi(ix1,ix2)=QeLR(ix1,ix2,1)*(1-xd3)+QeLR(ix1,ix2,2)*xd3
-      enddo
-    enddo
-
-
-    ! looking for nearby points to do interpolation
-    x1n(:,:)=xi(1,1,1)
-    x2n(:,:)=xi(1,1,2)
-    xdn=8.0*dFh
-
-    do ix1=1,numX1-1
-      do ix2=1,numX2-1
-        dn=sqrt((xi(ix1,ix2,1)-xc(1))**2 + (xi(ix1,ix2,2)-xc(2))**2)
-        ! lower left
-        if (xi(ix1,ix2,1)<=xc(1) .and. xi(ix1,ix2,2)<=xc(2) .and. &
-            dn<xdn(1,1)) then
-          x1n(1,1)=xi(ix1,ix2,1)
-          x2n(1,1)=xi(ix1,ix2,2)
-          Qn(1,1)=Qi(ix1,ix2)
-          xdn(1,1)=dn
-        endif
-        ! lower right
-        if (xi(ix1,ix2,1)>=xc(1) .and. xi(ix1,ix2,2)<=xc(2) .and. &
-            dn<xdn(2,1)) then
-          x1n(2,1)=xi(ix1,ix2,1)
-          x2n(2,1)=xi(ix1,ix2,2)
-          Qn(2,1)=Qi(ix1,ix2)
-          xdn(2,1)=dn
-        endif
-        ! upper left
-        if (xi(ix1,ix2,1)<=xc(1) .and. xi(ix1,ix2,2)>=xc(2) .and. &
-            dn<xdn(1,2)) then
-          x1n(1,2)=xi(ix1,ix2,1)
-          x2n(1,2)=xi(ix1,ix2,2)
-          Qn(1,2)=Qi(ix1,ix2)
-          xdn(1,2)=dn
-        endif
-        ! upper left
-        if (xi(ix1,ix2,1)>=xc(1) .and. xi(ix1,ix2,2)>=xc(2) .and. &
-            dn<xdn(2,2)) then
-          x1n(2,2)=xi(ix1,ix2,1)
-          x2n(2,2)=xi(ix1,ix2,2)
-          Qn(2,2)=Qi(ix1,ix2)
-          xdn(2,2)=dn
-        endif
-      enddo
-    enddo
-
-
-    ! interpolation
-    if (sum(xdn)==0) then
-      lQc=Qn(1,1)
-    elseif (sum(xdn)>0 .and. sum(xdn)<8.0*dFh) then
-      dyl=(xc(2)-x2n(1,1))/(x2n(1,2)-x2n(1,1))
-      dyr=(xc(2)-x2n(2,1))/(x2n(2,2)-x2n(2,1))
-      xil(1)=x1n(1,1)*(1.0-dyl)+x1n(1,2)*dyl
-      xil(2)=x2n(1,1)*(1.0-dyl)+x2n(1,2)*dyl
-      Ql=Qn(1,1)*(1.0-dyl)+Qn(1,2)*dyl
-      xir(1)=x1n(2,1)*(1.0-dyr)+x1n(2,2)*dyr
-      xir(2)=x2n(2,1)*(1.0-dyr)+x2n(2,2)*dyr
-      Qr=Qn(2,1)*(1.0-dyr)+Qn(2,2)*dyr
-
-      dxm=(xc(1)-xil(1))/(xir(1)-xil(1))
-      lQc=Ql*(1.0-dxm)+Qr*dxm
-    endif
-
-  end subroutine interp_lQ
 
   subroutine special_refine_grid(igrid,level,ixI^L,ixO^L,qt,w,x,refine,coarsen)
   ! Enforce additional refinement or coarsening
@@ -1380,6 +1604,8 @@ contains
     double precision, intent(in) :: qt, w(ixI^S,1:nw), x(ixI^S,1:ndim)
     integer, intent(inout) :: refine, coarsen
     double precision :: Atop, Alow, ks, xW_max, l_scale
+    double precision :: lQgrid(ixI^S)
+
 
     Atop=Busr/kx*cos(kx*2.0d0)
     Alow=Busr/kx*cos(kx*2.4d0)
@@ -1421,16 +1647,14 @@ contains
     endif
 
 
-    if (iprob>5) then
-      if (any(Busr/kx*cos(kx*x(ixO^S,2))*dexp(-ly*x(ixO^S,3))>Alow .and. &
-              Busr/kx*cos(kx*x(ixO^S,2))*dexp(-ly*x(ixO^S,3))<Atop .and. &
-              abs(x(ixO^S,1)-x(ixO^S,2)*ks)<=xW/2)) then
-      !if (any(x(ixO^S,1)>x(ixO^S,2)*ks-xw/2 .and. &
-      !        x(ixO^S,1)<x(ixO^S,2)*ks+xw/2)) then
-          !near or inner loop
-        refine=0
-        coarsen=0
-      !lower atmosphere
+    if (iprob==6) then
+      call getlQ(lQgrid,ixI^L,ixO^L,qt,w,x)
+      if (any(lQgrid(ixO^S)>0)) then
+        refine=1
+        coarsen=-1
+      else if (any(w(ixO^S,rho_)>1 .and. x(ixO^S,3)>xLI(1,1,numXI3,3))) then
+        refine=1
+        coarsen=-1
       else if (any(x(ixO^S,3)<=0.3d0)) then
         if (level<3) then
           refine=1
@@ -1440,10 +1664,40 @@ contains
           coarsen=-1
         endif
       else
-        refine=-1
-        coarsen=0
+        if (level<3) then
+          refine=0
+          coarsen=0
+        else
+          refine=-1
+          coarsen=1
+        endif
       endif
     endif
+
+
+    !if (iprob>5) then
+    !  if (any(Busr/kx*cos(kx*x(ixO^S,2))*dexp(-ly*x(ixO^S,3))>Alow .and. &
+    !          Busr/kx*cos(kx*x(ixO^S,2))*dexp(-ly*x(ixO^S,3))<Atop .and. &
+    !          abs(x(ixO^S,1)-x(ixO^S,2)*ks)<=xW/2)) then
+    !  !if (any(x(ixO^S,1)>x(ixO^S,2)*ks-xw/2 .and. &
+    !  !        x(ixO^S,1)<x(ixO^S,2)*ks+xw/2)) then
+    !      !near or inner loop
+    !    refine=0
+    !    coarsen=0
+    !  !lower atmosphere
+    !  else if (any(x(ixO^S,3)<=0.3d0)) then
+    !    if (level<3) then
+    !      refine=1
+    !      coarsen=-1
+    !    else
+    !      refine=-1
+    !      coarsen=-1
+    !    endif
+    !  else
+    !    refine=-1
+    !    coarsen=0
+    !  endif
+    !endif
 
   end subroutine special_refine_grid
 
@@ -1635,7 +1889,7 @@ contains
 
     integer, intent(in) :: qunit
 
-    call output_Bfield(qunit)
+    !call output_Bfield(qunit)
 
   end subroutine special_output
 
@@ -1652,24 +1906,24 @@ contains
     integer :: filenr
     logical :: fileopen
 
-    if (mype==0) then
-      inquire(qunit,opened=fileopen)
-      if(.not.fileopen)then
-        ! generate filename 
-        filenr=snapshotini
-        if (autoconvert) filenr=snapshotnext
-        write(filename,'(a,i4.4,a)') trim(base_filename),filenr,".txt"
-      endif
-      open(1,file=filename)
-      write(1,*) global_time
-      write(1,*) numX^D  
-      write(1,*) 'xL yL zL xR yR zL NpL NpR QeL QeR'
-      {do ix^D=1,numX^D \}
-        write(1,'(e15.7, e15.7, e15.7, e15.7, e15.7, e15.7, e15.7, e15.7, e15.7, e15.7)') &
-        {xFL(ix^DD,^D),},{xFR(ix^DD,^D),},NpL(ix^D),NpR(ix^D),QeL(ix^D),QeR(ix^D)
-      {enddo \}
-      close(1)
-    endif
+    !if (mype==0) then
+    !  inquire(qunit,opened=fileopen)
+    !  if(.not.fileopen)then
+    !    ! generate filename 
+    !    filenr=snapshotini
+    !    if (autoconvert) filenr=snapshotnext
+    !    write(filename,'(a,i4.4,a)') trim(base_filename),filenr,".txt"
+    !  endif
+    !  open(1,file=filename)
+    !  write(1,*) global_time
+    !  write(1,*) numX^D  
+    !  write(1,*) 'xL yL zL xR yR zL NpL NpR QeL QeR'
+    !  {do ix^D=1,numX^D \}
+    !    write(1,'(e15.7, e15.7, e15.7, e15.7, e15.7, e15.7, e15.7, e15.7, e15.7, e15.7)') &
+    !    {xFL(ix^DD,^D),},{xFR(ix^DD,^D),},NpL(ix^D),NpR(ix^D),QeL(ix^D),QeR(ix^D)
+    !  {enddo \}
+    !  close(1)
+    !endif
 
   end subroutine output_Bfield
 
