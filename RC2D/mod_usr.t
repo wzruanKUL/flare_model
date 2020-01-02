@@ -17,17 +17,20 @@ module mod_usr
   double precision, allocatable :: xFLb(:,:),xFRb(:,:)
   integer,allocatable :: numRL(:),numRR(:)
   integer,allocatable :: numTurnL(:),numTurnR(:)
-  integer,allocatable :: BopenL(:),BopenR(:)
   double precision, allocatable :: EtotL(:),EtotR(:)
-  double precision, allocatable :: muBL(:),muBR(:)
-  double precision :: eta1,eta2,eta3,etam,tar,vc
-  integer :: numValidL,numValidR,filenr
+  double precision, allocatable :: vs2BL(:),vs2BR(:)
+  double precision, allocatable :: vp2L(:),vp2R(:)
+  double precision :: eta1,eta2,eta3,etam,heta,heta2,tar,vc,v2cr=1.28d7
+  integer :: numValidL,numValidR,filenr,iApexL,iApexR
 
   integer :: numN
   double precision :: Nmin,Nmax,dNlog
   double precision, allocatable :: HXR(:^D&)
 
-  double precision :: t_update_Qe=-1.0e-7,dt_update_Qe=5.0e-4
+  double precision :: t_update_Qe=-1.0e-7,dt_update_Qe=5.0e-4,vmax=40.d0
+  logical :: readEtot
+  logical :: opened = .false.
+  double precision :: Eplus,Eminus
 
 contains
 
@@ -100,7 +103,7 @@ contains
     SRadius=69.61d0 ! Solar radius
     ! hydrostatic vertical stratification of density, temperature, pressure
     call inithdstatic
-    call get_bQa()
+    !call get_bQa()
 
     ! for fast electron heating
     call init_Bfield()
@@ -248,25 +251,27 @@ contains
     eta1=5.d-2
     eta3=1.d-2
     vc=1.d3
-    eta2=1.d-3
-    etam=1.d0
+    eta2=1.d-4
+    etam=1.d-1
+    heta=5.d0
+    heta2=1.d0
 
 
     refine_factor=2**(refine_max_level-1)
     dFh=(xprobmax2-xprobmin2)/(domain_nx2*refine_factor)
 
-    dt_update_Qe=max(dFh/2.0,dt)
+    dt_update_Qe=max(dFh/vmax,dt)
 
-    xQmin1=-3.0d0
-    xQmax1=3.0d0
+    xQmin1=-4.d0
+    xQmax1=4.d0
     xQmin2=0.d0
-    xQmax2=10.0d0
+    xQmax2=6.0d0
     dxQ1=dFh
     dxQ2=dFh
     numXQ1=floor((xQmax1-0.d0)/dxQ1)*2
     numXQ2=floor((xQmax2-xQmin2)/dxQ2)
 
-    lengthFL=(xprobmax2-xprobmin2)*1.5d0
+    lengthFL=(xprobmax2-xprobmin2)*2.d0
     numLP=floor(lengthFL/(dFh))
     numFL=numXQ1
 
@@ -274,18 +279,14 @@ contains
     allocate(xQ(numXQ1,numXQ2,ndim),Qe(numXQ1,numXQ2))
     allocate(numRL(numFL),numRR(numFL))
     allocate(numTurnL(numFL),numTurnR(numFL))
-    allocate(BopenL(numFL),BopenR(numFL))
     allocate(HXR(numXQ1,numXQ2))
     allocate(EtotL(numFL),EtotR(numFL))
-    allocate(muBL(numFL),muBR(numFL))
+    allocate(vs2BL(numFL),vs2BR(numFL))
+    allocate(vp2L(numFL),vp2R(numFL))
 
     do ix1=1,numFL
-      !xFLb(ix1,1)=0.d0-0.5d0*dxQ1-(2*ix1-1)*dxQ1
-      !xFLb(ix1,1)=0.d0-0.5d0*dxQ1-(ix1-1)*dxQ1
       xFLb(ix1,1)=0.d0-0.5d0*dxQ1-(ix1-0.5)*dxQ1
       xFLb(ix1,2)=0.d0
-      !xFRb(ix1,1)=0.d0+0.5d0*dxQ1+(2*ix1)*dxQ1
-      !xFRb(ix1,1)=0.d0+0.5d0*dxQ1+(ix1-1)*dxQ1
       xFRb(ix1,1)=0.d0+0.5d0*dxQ1+(ix1)*dxQ1
       xFRb(ix1,2)=0.d0
     enddo
@@ -308,8 +309,16 @@ contains
     EtotL=0.d0
     EtotR=0.d0
     Qe=0.d0
-    muBL=0.d0
-    muBR=0.d0
+    vs2BL=0.d0
+    vs2BR=0.d0
+    vp2L=0.d0
+    vp2R=0.d0
+
+    if (iprob==3 .and. restart_from_file /= undefined)  then
+      readEtot=.true.
+    else
+      readEtot=.false.
+    endif
 
   end subroutine init_Bfield
 
@@ -393,7 +402,7 @@ contains
     integer :: idir,idirmin,ix^D
     double precision :: current(ixI^S,3),jpara(ixI^S),j2(ixI^S)
     double precision :: Btotal(ixI^S,ndir),B2(ixI^S),Alfv(ixI^S),Ma(ixI^S)
-    double precision :: ED(ixI^S),pth(ixI^S),Te(ixI^S),eta(ixI^S)
+    double precision :: v2(ixI^S),pth(ixI^S),Te(ixI^S),eta(ixI^S)
     double precision :: Bn(ixI^S),v(ixI^S,ndir),Efield(ixI^S,ndir),jE3(ixI^S)
     
 
@@ -402,59 +411,22 @@ contains
     else
       Btotal(ixI^S,1:ndir)=w(ixI^S,mag(1:ndir))
     endif
-    ! B^2
-    !B2(ixO^S)=sum((Btotal(ixO^S,:))**2,dim=ndim+1)
-    B2(ixO^S)=Btotal(ixO^S,1)**2+Btotal(ixO^S,2)**2+Btotal(ixO^S,3)**2
-    Bn(ixO^S)=sqrt(Btotal(ixO^S,1)**2/(Btotal(ixO^S,1)**2+Btotal(ixO^S,2)**2))
 
     cQgrid=0.d0
 
     call get_current(w,ixI^L,ixO^L,idirmin,current)
     call special_eta(w,ixI^L,ixO^L,idirmin,x,current,eta)
-
-    jpara(ixO^S)=abs(current(ixO^S,1)*Btotal(ixO^S,1)+current(ixO^S,2)*Btotal(ixO^S,2)+&
-                     current(ixO^S,3)*Btotal(ixO^S,3))/sqrt(B2(ixO^S))
-    j2(ixO^S)=current(ixO^S,1)**2+current(ixO^S,2)**2+current(ixO^S,3)**2
-    !cQgrid(ixO^S)=Bn(ixO^S)*eta(ixO^S)*j2(ixO^S)
-
-    Alfv(ixO^S)=dsqrt(B2(ixO^S)/w(ixO^S,rho_))
-    Ma(ixO^S)=(w(ixO^S,mom(2))/w(ixO^S,rho_))/Alfv(ixO^S)
-
-
     call mhd_get_pthermal(w,x,ixI^L,ixO^L,pth)
     Te(ixO^S)=pth(ixO^S)/w(ixO^S,rho_)
-
-
-    !do idir=1,ndir
-    !  v(ixO^S,idir)=w(ixO^S,mom(idir))/w(ixO^S,rho_)
-    !enddo
-    !call cross_product(ixI^L,ixO^L,Btotal,v,Efield)
-    !do idir=1,ndir
-    !  Efield(ixO^S,idir)=Efield(ixO^S,idir)+eta(ixO^S)*current(ixO^S,idir)
-    !enddo
-    !jE3(ixO^S)=current(ixO^S,3)*Efield(ixO^S,3)
-    !{do ix^DB=ixOmin^DB,ixOmax^DB\}
-    !  if (eta(ix^D)>eta3) eta(ix^D)=eta3
-    !  if (Te(ix^D)>5) cQgrid(ix^D)=eta(ix^D)*j2(ix^D)
-    !{end do\}
-
-
+    v2(ixO^S)=w(ixO^S,mom(2))/w(ixO^S,rho_)
+    j2=0.d0
+    do idir=1,3
+      j2(ixO^S)=j2(ixO^S)+current(ixO^S,idir)**2
+    enddo
 
     {do ix^DB=ixOmin^DB,ixOmax^DB\}
-      Bn(ix^D)=abs(Btotal(ix^D,1))/10
-      if (Bn(ix^D)>1) Bn(ix^D)=1
-      if (Te(ix^D)>5) cQgrid(ix^D)=Bn(ix^D)*eta(ix^D)*j2(ix^D)
+      if (Te(ix^D)>5.d0 .and. v2(ix^D)<(-v2cr/unit_velocity)) cQgrid(ix^D)=eta(ix^D)*j2(ix^D)
     {end do\}
-
-
-    !{do ix^DB=ixOmin^DB,ixOmax^DB\}
-    !  if (Bn(ix^D)>0.1) Bn(ix^D)=0.1
-    !  if (Te(ix^D)>5) cQgrid(ix^D)=Bn(ix^D)*eta(ix^D)*j2(ix^D)
-    !{end do\}
-
-    !{do ix^DB=ixOmin^DB,ixOmax^DB\}
-    !  if (Te(ix^D)>5 .and. Bn(ix^D)>0.01) cQgrid(ix^D)=eta(ix^D)*j2(ix^D)
-    !{end do\}
 
   end subroutine getcQ
 
@@ -553,8 +525,9 @@ contains
     double precision, intent(in) :: qt, x(ixI^S,1:ndim)
     double precision, intent(inout) :: w(ixI^S,1:nw)
 
-    double precision :: pth(ixI^S),tmp(ixI^S),ggrid(ixI^S),invT(ixI^S)
+    double precision :: pth(ixI^S),tmp(ixI^S),ggrid(ixI^S),Te(ixI^S)
     double precision :: delydelx, Bf(ixI^S,1:ndir)
+    double precision :: dpdh,dh,dp,Tu
     integer :: ix^D,idir,ixInt^L,ixIntB^L
     integer :: ixA^L
 
@@ -576,17 +549,12 @@ contains
         w(ix1,ixOmin2:ixOmax2,mag(:))=(1.0d0/3.0d0)* &
                    (-w(ix1+2,ixOmin2:ixOmax2,mag(:)) &
               +4.0d0*w(ix1+1,ixOmin2:ixOmax2,mag(:)))
-      !  w(ix1,ixOmin2:ixOmax2,mom(:))=(1.0d0/3.0d0)* &
-      !             (-w(ix1+2,ixOmin2:ixOmax2,mom(:)) &
-      !        +4.0d0*w(ix1+1,ixOmin2:ixOmax2,mom(:)))
       enddo
       call mhd_to_conserved(ixI^L,ixO^L,w,x)
     case(2)
       ixA^L=ixO^L;
       ixAmin1=ixOmin1-nghostcells;ixAmax1=ixOmin1-1;
       call mhd_get_pthermal(w,x,ixI^L,ixA^L,pth)
-      !w(ixO^S,rho_)=w(ixOmin1-1:ixOmin1-nghostcells:-1,ixOmin2:ixOmax2,rho_)
-      !w(ixO^S,p_)=pth(ixOmin1-1:ixOmin1-nghostcells:-1,ixOmin2:ixOmax2)
       do ix1=ixOmin1,ixOmax1
         w(ix1^%1ixO^S,mom(1))=w(ixOmin1-1^%1ixO^S,mom(1))/w(ixOmin1-1^%1ixO^S,rho_)
         w(ix1^%1ixO^S,mom(2))=w(ixOmin1-1^%1ixO^S,mom(2))/w(ixOmin1-1^%1ixO^S,rho_)
@@ -598,85 +566,71 @@ contains
         w(ix1,ixOmin2:ixOmax2,mag(:))=(1.0d0/3.0d0)* &
                    (-w(ix1-2,ixOmin2:ixOmax2,mag(:)) &
               +4.0d0*w(ix1-1,ixOmin2:ixOmax2,mag(:)))
-        !w(ix1,ixOmin2:ixOmax2,mom(:))=(1.0d0/3.0d0)* &
-        !           (-w(ix1-2,ixOmin2:ixOmax2,mom(:)) &
-        !      +4.0d0*w(ix1-1,ixOmin2:ixOmax2,mom(:)))
       enddo
       call mhd_to_conserved(ixI^L,ixO^L,w,x)
     case(3)
-      ixA^L=ixO^L;
-      ixAmin2=ixOmax2+1;ixAmax2=ixOmax2+1;
-      call mhd_get_pthermal(w,x,ixI^L,ixA^L,pth)
+      ! fixed zero velocity
+      do idir=1,ndir
+        w(ixO^S,mom(idir))=-w(ixOmin1:ixOmax1,ixOmax2+nghostcells:ixOmax2+1:-1,mom(idir))&
+                   /w(ixOmin1:ixOmax1,ixOmax2+nghostcells:ixOmax2+1:-1,rho_)
+      end do
+      ! fixed b1 b2 b3
+      if(B0field) then
+        w(ixO^S,mag(:))=0.d0
+      else
+        call specialset_B0(ixI^L,ixO^L,x,Bf)
+        w(ixO^S,mag(1:ndir))=Bf(ixO^S,1:ndir)
+      endif
+      ! fixed gravity stratification of density and pressure pre-determined in
+      ! initial condition
       do ix2=ixOmin2,ixOmax2
-        w(ix2^%2ixO^S,rho_)=w(ixOmax2+1^%2ixO^S,rho_)
-        w(ix2^%2ixO^S,mom(1))=w(ixOmax2+1^%2ixO^S,mom(1))/w(ixOmax2+1^%2ixO^S,rho_)
-        w(ix2^%2ixO^S,mag(2))=w(ixOmax2+1^%2ixO^S,mag(2))
-        w(ix2^%2ixO^S,mag(3))=w(ixOmax2+1^%2ixO^S,mag(3))
-        w(ix2^%2ixO^S,p_)=pth(ixOmax2+1^%2ixO^S)
-        if(mhd_glm) w(ix2^%2ixO^S,psi_)=w(ixOmax2+1^%2ixO^S,psi_)
+        w(ixOmin1:ixOmax1,ix2,rho_)=rbc(ix2)
+        w(ixOmin1:ixOmax1,ix2,p_)=pbc(ix2)
       enddo
-      w(ixO^S,mom(2:3))=zero
-      w(ixO^S,mag(1))=zero
       call mhd_to_conserved(ixI^L,ixO^L,w,x)
     case(4)
-      !!ixA^L=ixO^L;
-      !!ixAmin2=ixOmin2-1;ixAmax2=ixOmin2-1;
-      !!call mhd_get_pthermal(w,x,ixI^L,ixA^L,pth)
-      !!do ix2=ixOmin2,ixOmax2
-      !!  w(ix2^%2ixO^S,rho_)=w(ixOmin2-1^%2ixO^S,rho_)
-      !!  w(ix2^%2ixO^S,mom(1))=w(ixOmin2-1^%2ixO^S,mom(1))/w(ixOmin2-1^%2ixO^S,rho_)
-      !!  w(ix2^%2ixO^S,mom(2))=w(ixOmin2-1^%2ixO^S,mom(2))/w(ixOmin2-1^%2ixO^S,rho_)
-      !!  w(ix2^%2ixO^S,mom(3))=w(ixOmin2-1^%2ixO^S,mom(3))/w(ixOmin2-1^%2ixO^S,rho_)
-      !!  w(ix2^%2ixO^S,p_)=pth(ixOmin2-1^%2ixO^S)
-      !!enddo
-      !!do ix2=ixOmin2,ixOmax2
-      !!  w(ixOmin1:ixOmax1,ix2,mag(:))=(1.0d0/3.0d0)* &
-      !!              (-w(ixOmin1:ixOmax1,ix2-2,mag(:))&
-      !!         +4.0d0*w(ixOmin1:ixOmax1,ix2-1,mag(:)))
-      !!enddo
-
-      !ixInt^L=ixO^L;
-      !ixIntmin2=ixOmin2-1;ixIntmax2=ixOmin2-1;
-      !call mhd_get_pthermal(w,x,ixI^L,ixInt^L,pth)
-      !ixIntmin2=ixOmin2-1;ixIntmax2=ixOmax2;
-      !call getggrav(ggrid,ixI^L,ixInt^L,x)
-      !! fill pth, rho ghost layers according to gravity stratification
-      !invT(ixOmin2-1^%2ixO^S)=w(ixOmin2-1^%2ixO^S,rho_)/pth(ixOmin2-1^%2ixO^S)
-      !tmp=0.d0
-      !do ix2=ixOmin2,ixOmax2
-      !  tmp(ixOmin2-1^%2ixO^S)=tmp(ixOmin2-1^%2ixO^S)+0.5d0*&
-      !      (ggrid(ix2^%2ixO^S)+ggrid(ix2-1^%2ixO^S))*invT(ixOmin2-1^%2ixO^S)
-      !  w(ix2^%2ixO^S,p_)=pth(ixOmin2-1^%2ixO^S)*dexp(tmp(ixOmin2-1^%2ixO^S)*dxlevel(2))
-      !  w(ix2^%2ixO^S,rho_)=w(ix2^%2ixO^S,p_)*invT(ixOmin2-1^%2ixO^S)
-      !enddo
-      !! fixed zero velocity
-      !do idir=1,ndir
-      !  w(ixO^S,mom(idir))=-w(ixOmin1:ixOmax1,ixOmin2-1:ixOmin2-nghostcells:-1,mom(idir))&
-      !               /w(ixOmin1:ixOmax1,ixOmin2-1:ixOmin2-nghostcells:-1,rho_)
-      !end do
-      !! zero normal gradient extrapolation
-      !do ix2=ixOmin2,ixOmax2
-      !  w(ixOmin1:ixOmax1,ix2,mag(:))=(1.0d0/3.0d0)* &
-      !              (-w(ixOmin1:ixOmax1,ix2-2,mag(:))&
-      !         +4.0d0*w(ixOmin1:ixOmax1,ix2-1,mag(:)))
-      !enddo
-
       ixA^L=ixO^L;
-      ixAmin2=ixOmin2-1;ixAmax2=ixOmin2-1;
-      call mhd_get_pthermal(w,x,ixI^L,ixA^L,pth)
+      ixAmin2=ixOmin2-2;ixAmax2=ixOmin2-1;
+      call mhd_to_primitive(ixI^L,ixA^L,w,x)
+      call mhd_to_primitive(ixI^L,ixO^L,w,x)
+      Te(ixO^S)=w(ixO^S,p_)/w(ixO^S,rho_)
+   
+      ! magnetic field 
+      w(ixOmin2^%2ixO^S,mag(1))=-w(ixOmin2-1^%2ixO^S,mag(1))
+      w(ixOmin2+1^%2ixO^S,mag(1))=-w(ixOmin2-2^%2ixO^S,mag(1))
+      w(ixOmin2^%2ixO^S,mag(2))=w(ixOmin2-1^%2ixO^S,mag(2))
+      w(ixOmin2+1^%2ixO^S,mag(2))=w(ixOmin2-2^%2ixO^S,mag(2))
+      w(ixOmin2^%2ixO^S,mag(3))=w(ixOmin2-1^%2ixO^S,mag(3))
+      w(ixOmin2+1^%2ixO^S,mag(3))=w(ixOmin2-2^%2ixO^S,mag(3))
+
+      ! momentum
       do ix2=ixOmin2,ixOmax2
-        w(ix2^%2ixO^S,rho_)=w(ixOmin2-1^%2ixO^S,rho_)
-        w(ix2^%2ixO^S,p_)=pth(ixOmin2-1^%2ixO^S)
-        w(ix2^%2ixO^S,mom(1))=w(ixOmin2-1^%2ixO^S,mom(1))/w(ixOmin2-1^%2ixO^S,rho_)
-        w(ix2^%2ixO^S,mom(2))=0
-        w(ix2^%2ixO^S,mom(3))=0
-        w(ix2^%2ixO^S,mag(1))=0
-        w(ix2^%2ixO^S,mag(2))=w(ixOmin2-1^%2ixO^S,mag(2))
-        w(ix2^%2ixO^S,mag(3))=w(ixOmin2-1^%2ixO^S,mag(3))
+        w(ix2^%2ixO^S,mom(1))=w(ixOmin2-1^%2ixO^S,mom(1))
+        w(ix2^%2ixO^S,mom(2))=w(ixOmin2-1^%2ixO^S,mom(2))
+        w(ix2^%2ixO^S,mom(3))=w(ixOmin2-1^%2ixO^S,mom(3))
       enddo
 
+      !! pressure and density
+      !do ix2=ixOmin2,ixOmax2
+      !  w(ix2^%2ixO^S,p_)=w(ix2-1^%2ixO^S,p_)
+      !  w(ix2^%2ixO^S,rho_)=w(ix2-1^%2ixO^S,rho_)
+      !enddo
+      ! pressure and density
+      do ix1=ixOmin1,ixOmax1
+        dpdh=0.d0
+        Tu=w(ix1,ixOmin2-1,p_)/w(ix1,ixOmin2-1,rho_)
+        if (Tu>5.d0) then
+          dpdh=-w(ix1,ixOmin2-1,p_)/2.d0
+        endif
+        do ix2=ixOmin2,ixOmax2
+          dh=x(ix1,ix2,2)-x(ix1,ix2-1,2)
+          dp=dpdh*dh
+          w(ix1,ix2,rho_)=w(ix1,ix2-1,rho_)
+          w(ix1,ix2,p_)=w(ix1,ix2-1,p_)+dp
+        enddo
+      enddo
 
-
+      call mhd_to_conserved(ixI^L,ixA^L,w,x)
       call mhd_to_conserved(ixI^L,ixO^L,w,x)
     case default
       call mpistop("Special boundary is not defined for this region")
@@ -734,7 +688,7 @@ contains
 
     ! for converting data
     if (iprob==3 .and. convert .and. qt>tar) then
-      dt_update_Qe=dFh/5.0
+      dt_update_Qe=max(dFh/vmax,dt)
 
       ! read Etot
       if (mype==0) then
@@ -743,10 +697,10 @@ contains
         open(1,file=fname,action='READ')
         read(1,*) tempc
         read(1,*) tempi
-        read(1,*) tempc,tempc,tempc,tempc,tempc,tempc,tempc
+        read(1,*) tempc,tempc,tempc,tempc,tempc,tempc,tempc,tempc,tempc
         do ix1=1,numFL
           read(1,*) tempi,xFLb(ix1,1),xFRb(ix1,1),EtotL(ix1),EtotR(ix1),&
-                    muBL(ix1),muBR(ix1)
+                    vs2BL(ix1),vs2BR(ix1),vp2L(ix1),vp2R(ix1)
         enddo
         close(1)
       endif
@@ -754,16 +708,19 @@ contains
       call MPI_BCAST(xFRb(:,1),numFL,MPI_DOUBLE_PRECISION,0,icomm,ierrmpi)
       call MPI_BCAST(EtotL,numFL,MPI_DOUBLE_PRECISION,0,icomm,ierrmpi)
       call MPI_BCAST(EtotR,numFL,MPI_DOUBLE_PRECISION,0,icomm,ierrmpi)
-      call MPI_BCAST(muBL,numFL,MPI_DOUBLE_PRECISION,0,icomm,ierrmpi)
-      call MPI_BCAST(muBR,numFL,MPI_DOUBLE_PRECISION,0,icomm,ierrmpi)
+      call MPI_BCAST(vs2BL,numFL,MPI_DOUBLE_PRECISION,0,icomm,ierrmpi)
+      call MPI_BCAST(vs2BR,numFL,MPI_DOUBLE_PRECISION,0,icomm,ierrmpi)
+      call MPI_BCAST(vp2L,numFL,MPI_DOUBLE_PRECISION,0,icomm,ierrmpi)
+      call MPI_BCAST(vp2R,numFL,MPI_DOUBLE_PRECISION,0,icomm,ierrmpi)
 
       !call get_flare_eflux()
     endif
 
 
     ! for restart
-    if (iprob==3 .and. restart_from_file /= undefined)  then
-      dt_update_Qe=dFh/5.0
+    if (readEtot)  then
+      dt_update_Qe=max(dFh/vmax,dt)
+      readEtot=.false.
 
       ! read Etot
       if (mype==0) then
@@ -772,10 +729,10 @@ contains
         open(1,file=fname,action='READ')
         read(1,*) tempc
         read(1,*) tempi
-        read(1,*) tempc,tempc,tempc,tempc,tempc,tempc,tempc
+        read(1,*) tempc,tempc,tempc,tempc,tempc,tempc,tempc,tempc,tempc
         do ix1=1,numFL
           read(1,*) tempi,xFLb(ix1,1),xFRb(ix1,1),EtotL(ix1),EtotR(ix1),&
-                    muBL(ix1),muBR(ix1)
+                    vs2BL(ix1),vs2BR(ix1),vp2L(ix1),vp2R(ix1)
         enddo
         close(1)
       endif
@@ -783,18 +740,21 @@ contains
       call MPI_BCAST(xFRb(:,1),numFL,MPI_DOUBLE_PRECISION,0,icomm,ierrmpi)
       call MPI_BCAST(EtotL,numFL,MPI_DOUBLE_PRECISION,0,icomm,ierrmpi)
       call MPI_BCAST(EtotR,numFL,MPI_DOUBLE_PRECISION,0,icomm,ierrmpi)
-      call MPI_BCAST(muBL,numFL,MPI_DOUBLE_PRECISION,0,icomm,ierrmpi)
-      call MPI_BCAST(muBR,numFL,MPI_DOUBLE_PRECISION,0,icomm,ierrmpi)
+      call MPI_BCAST(vs2BL,numFL,MPI_DOUBLE_PRECISION,0,icomm,ierrmpi)
+      call MPI_BCAST(vs2BR,numFL,MPI_DOUBLE_PRECISION,0,icomm,ierrmpi)
+      call MPI_BCAST(vp2L,numFL,MPI_DOUBLE_PRECISION,0,icomm,ierrmpi)
+      call MPI_BCAST(vp2R,numFL,MPI_DOUBLE_PRECISION,0,icomm,ierrmpi)
 
       call MPI_BCAST(filenr,1,MPI_INTEGER,0,icomm,ierrmpi)
       filenr=filenr+1
+
     endif
 
 
     ! calculate heating
     if (iprob==3 .and. qt>tar) then
 
-      dt_update_Qe=max(dFh/5.0,dt)
+      dt_update_Qe=max(dFh/vmax,dt)
 
       if (qt>t_update_Qe+10*dt_update_Qe) then
         t_update_Qe=qt-1.0e-7
@@ -823,11 +783,11 @@ contains
           open(1,file=fname)
           write(1,*) 'numFL'
           write(1,*) numFL
-          write(1,*) 'iFL xFL(1) xFR(1) EtotL EtotR muBL muBR'
+          write(1,*) 'iFL xFL(1) xFR(1) EtotL EtotR vs2BL vs2BR vp2L vp2R'
           do ix1=1,numFL
-            write(1,'(i8, e15.7, e15.7, e15.7, e15.7, e15.7, e15.7)'), ix1,&
+            write(1,'(i8, e15.7, e15.7, e15.7, e15.7, e15.7, e15.7, e15.7, e15.7)'), ix1,&
                   xFLb(ix1,1),xFRb(ix1,1),EtotL(ix1),EtotR(ix1),&
-                  muBL(ix1),muBR(ix1)
+                  vs2BL(ix1),vs2BR(ix1),vp2L(ix1),vp2R(ix1)
           enddo
           close(1)
         endif
@@ -867,6 +827,7 @@ contains
     xFR=0
     wBL=0
     wBR=0
+    QeR=0.d0
 
 
     xFL(:,1,1)=xFLb(:,1)
@@ -880,7 +841,7 @@ contains
 
 
     ! find the heating region 
-    call locate_heating(xFL,xFR)
+    call locate_midpoint(xFL,xFR)
 
 
     ! update heating table
@@ -890,15 +851,25 @@ contains
     Nmax=1.0e23
     dNlog=log10(Nmax/Nmin)/(numN-1.0) 
     call update_heating_table(QeN,delta,Ec)
- 
+
+    Eplus=0.d0
+    Eminus=0.d0 
  
     ! get heating rate for each field line
-    call get_heating_rate(xFL,wBL,QeL,QeN,numRL,numTurnL,numValidL,EtotL,muBL,eFluxL)
-    call get_heating_rate(xFR,wBR,QeR,QeN,numRR,numTurnR,numValidR,EtotR,muBR,eFluxR)
+    call get_heating_rate(xFL,wBL,QeL,QeN,numRL,numTurnL,numValidL,iApexL,EtotL,vs2BL,vp2L,eFluxL)
+    call get_heating_rate(xFR,wBR,QeR,QeN,numRR,numTurnR,numValidR,iApexR,EtotR,vs2BR,vp2R,eFluxR)
     ! total number flux of fast electrons
     eFluxL=eFluxL*heatunit*unit_length*((delta-2)/(delta-1))/(Ec*keV_erg)
     eFluxR=eFluxR*heatunit*unit_length*((delta-2)/(delta-1))/(Ec*keV_erg)
+    
+    !Eplus=0.5d0*Eplus*heatunit*unit_length**2
+    !Eminus=Eminus*heatunit*unit_length**2
+    Eplus=0.5d0*Eplus
+    Eminus=Eminus/2.d0
 
+
+    !if (mype==0) write(*,'(a, e15.7)') 'Energy + is', Eplus
+    !if (mype==0) write(*,'(a, e15.7)') 'Energy - is', Eminus
   
     ! get local heating rate via interpolation
     call get_Qe(xFL,xFR,wBL,wBR,QeL,QeR)
@@ -909,23 +880,30 @@ contains
 
     if (convert) then
       ! get fast electron spectra table
-      call get_spectra(delta,Ec,dEe,Ee,spectra,numEe)
+      !call get_spectra(delta,Ec,dEe,Ee,spectra,numEe)
   
       ! get HXR flux for each field line
-      call get_HXR_line(Ee,spectra,numEe,dEe,xFL,wBL,numValidL,numTurnL,numRL,eFluxL,muBL,HXRL)
-      call get_HXR_line(Ee,spectra,numEe,dEe,xFR,wBR,numValidR,numTurnR,numRR,eFluxR,muBR,HXRR)
+      !call get_HXR_line(Ee,spectra,numEe,dEe,xFL,wBL,numValidL,numTurnL,numRL,eFluxL,vs2BL,vp2L,HXRL)
+      !call get_HXR_line(Ee,spectra,numEe,dEe,xFR,wBR,numValidR,numTurnR,numRR,eFluxR,vs2BR,vp2R,HXRR)
   
       ! get local HXR flux via interpolation
-      call interp_HXR(xFL,xFR,wBL,wBR,HXRL,HXRR)
+      !call interp_HXR(xFL,xFR,wBL,wBR,HXRL,HXRR)
+      HXR=0.d0
   
     else 
       HXR=0.d0
     endif
 
 
+    ! output data for field lines
+    if (convert) then
+      !call write_fieldline(xFL,wBL,QeL,HXRL,numValidL,numRL)
+      call integrate_variable()      
+    endif
+
     ! field line split
-    call split_Bfield(xFL,xFLb,wBL,EtotL,numRL,numValidL)
-    call split_Bfield(xFR,xFRb,wBR,EtotR,numRR,numValidR)
+    call split_Bfield(xFL,xFLb,wBL,EtotL,vs2BL,numRL,numValidL)
+    call split_Bfield(xFR,xFRb,wBR,EtotR,vs2BR,numRR,numValidR)
 
 
     deallocate(Ee,spectra)
@@ -933,26 +911,199 @@ contains
 
   end subroutine get_flare_eflux
 
-  subroutine split_Bfield(xF,xFb,wB,Etot,numR,numValid)
+  subroutine integrate_variable()
+    use mod_global_parameters
+
+    double precision :: dxb^D,xb^L
+    integer :: iigrid,igrid,j
+    integer :: ixO^L,ixI^L,ix^D
+
+    double precision :: lQsum,lQpe,qt
+    double precision :: Qbsum,Qbpe
+    double precision :: cQsum,cQpe
+    double precision :: HXRsum,HXRpe
+    double precision :: SXRsum,SXRpe
+
+    ^D&ixImin^D=ixglo^D; 
+    ^D&ixImax^D=ixghi^D; 
+    ^D&ixOmin^D=ixmlo^D; 
+    ^D&ixOmax^D=ixmhi^D; 
+
+    lQsum=0.d0
+    lQpe=0.d0
+    Qbsum=0.d0
+    Qbpe=0.d0
+    cQsum=0.d0
+    cQpe=0.d0
+    HXRsum=0.d0
+    HXRpe=0.d0
+    SXRsum=0.d0
+    SXRpe=0.d0
+    qt=global_time
+
+    do iigrid=1,igridstail; igrid=igrids(iigrid);
+      ^D&dxlevel(^D)=rnode(rpdx^D_,igrid); 
+
+      block=>ps(igrid)
+
+      call integrate_Qe_grid(ixI^L,ixO^L,qt,ps(igrid)%w,ps(igrid)%x,lQpe)
+
+      call integrate_QB_grid(ixI^L,ixO^L,qt,ps(igrid)%w,ps(igrid)%x,Qbpe)
+
+      call integrate_cQ_grid(ixI^L,ixO^L,qt,ps(igrid)%w,ps(igrid)%x,cQpe)
+
+    enddo
+
+    call MPI_ALLREDUCE(lQpe,lQsum,1,MPI_DOUBLE_PRECISION,MPI_SUM,icomm,ierrmpi)
+    call MPI_ALLREDUCE(Qbpe,Qbsum,1,MPI_DOUBLE_PRECISION,MPI_SUM,icomm,ierrmpi)
+    call MPI_ALLREDUCE(cQpe,cQsum,1,MPI_DOUBLE_PRECISION,MPI_SUM,icomm,ierrmpi)
+
+    !lQsum=lQsum*heatunit*unit_length**2
+    !Qbsum=Qbsum*heatunit*unit_length**2
+    !cQsum=cQsum*heatunit*unit_length**2
+
+    if (mype==0) write(*,'(a, e15.7)') 'heating is', lQsum
+    if (mype==0) write(*,'(a, e15.7)') 'energy released via reconnection is', Qbsum
+    if (mype==0) write(*,'(a, e15.7)') 'energy used to accelerate particle is', cQsum
+
+  end subroutine integrate_variable
+
+
+  subroutine integrate_cQ_grid(ixI^L,ixO^L,qt,w,x,cQpe)
+    use mod_global_parameters
+
+    integer :: ixI^L,ixO^L
+    double precision, intent(in) :: w(ixI^S,nw), x(ixI^S,1:ndim)
+    double precision :: qt,cQpe
+
+    double precision :: cQgrid(ixI^S)
+    integer :: ix^D
+
+    cQgrid=0.d0
+    call getcQ(cQgrid,ixI^L,ixO^L,qt,w,x)
+
+    {do ix^DB=ixOmin^DB,ixOmax^DB\}
+      cQpe=cQpe+dxlevel(1)*dxlevel(2)*cQgrid(ix^D)
+    {end do\}
+
+  end subroutine integrate_cQ_grid
+
+  subroutine integrate_Qe_grid(ixI^L,ixO^L,qt,w,x,lQpe)
+    use mod_global_parameters
+
+    integer :: ixI^L,ixO^L
+    double precision, intent(in) :: w(ixI^S,nw), x(ixI^S,1:ndim)
+    double precision :: qt,lQpe
+
+    double precision :: lQgrid(ixI^S)
+    integer :: ix^D
+
+    call getlQ(lQgrid,ixI^L,ixO^L,qt,w,x)
+
+    {do ix^DB=ixOmin^DB,ixOmax^DB\}
+      lQpe=lQpe+dxlevel(1)*dxlevel(2)*lQgrid(ix^D)
+    {end do\}
+
+  end subroutine integrate_Qe_grid
+
+  subroutine integrate_Qb_grid(ixI^L,ixO^L,qt,w,x,Qbpe)
+    use mod_global_parameters
+
+    integer :: ixI^L,ixO^L
+    double precision, intent(in) :: w(ixI^S,nw), x(ixI^S,1:ndim)
+    double precision :: qt,Qbpe
+
+    double precision :: Qbgrid(ixI^S)
+    integer :: ix^D
+    double precision :: current(ixI^S,3),eta(ixI^S),js(ixI^S)
+    integer :: idirmin,j,idirmin0
+    
+
+    current=0.d0
+
+    call get_current(w,ixI^L,ixO^L,idirmin,current)
+    call special_eta(w,ixI^L,ixO^L,idirmin,x,current,eta)
+
+    Qbgrid=0.d0
+    js=0.d0
+    {do ix^DB=ixOmin^DB,ixOmax^DB\}
+      do j=1,ndir
+        js(ix^D)=js(ix^D)+current(ix^D,j)**2
+      enddo
+      Qbgrid(ix^D)=eta(ix^D)*js(ix^D)
+      Qbpe=Qbpe+dxlevel(1)*dxlevel(2)*Qbgrid(ix^D)
+    {end do\}
+
+  end subroutine integrate_Qb_grid
+
+  subroutine write_fieldline(xF,wB,Qef,HXRf,numValid,numR)
+    use mod_global_parameters
+
+    double precision :: xF(numFL,numLP,ndim),wB(numFL,numLP,nw+ndir)
+    double precision :: Qef(numFL,numLP),HXRf(numFL,numLP)
+    integer :: numValid
+    integer :: numR(numFL)
+
+    integer :: filenr,ix^D,ixb,j
+    character(30) :: fname
+    double precision :: xb,dxmin
+    logical :: outputf
+
+    xb=-1.d0
+    outputf=.FALSE.
+    dxmin=dFh
+
+    do ix1=1,numValid
+      if (abs(xF(ix1,1,1)-xb)<dFh) then
+        dxmin=abs(xF(ix1,1,1)-xb)
+        ixb=ix1
+        outputf=.TRUE.
+      endif
+    enddo
+
+    if (outputf .and. mype==0) then
+      filenr=snapshotini
+      write(fname, '(a,i4.4,a)') trim(base_filename),filenr,'_Bfield.txt'
+      open(1,file=fname)
+      write(1,*) xF(ixb,1,1)
+      write(1,*) numR(ixb)
+      write(1,*) 'x1 x2 rho m1 m2 m3 p b1 b2 b3 lQ HXR'
+      ix1=ixb
+      do ix2=1,numR(ix1)
+        write(1,'(e15.7, e15.7)',advance='no') xF(ix^D,1),xF(ix^D,2)
+        do j=1,nw
+          write(1,'(e15.7)',advance='no') wB(ix^D,j)
+        enddo
+        write(1,'(e15.7, e15.7)') Qef(ix^D),HXRf(ix^D)
+      enddo
+      close(1)
+    endif
+
+  end subroutine write_fieldline
+
+  subroutine split_Bfield(xF,xFb,wB,Etot,vs2B,numR,numValid)
     !
     use mod_global_parameters
 
     double precision :: xF(numFL,numLP,ndim),xFb(numFL,2)
-    double precision :: Etot(numFL),wB(numFL,numLP,nw+ndir)
+    double precision :: Etot(numFL),vs2B(numFL),wB(numFL,numLP,nw+ndir)
     integer :: numValid
     integer :: numR(numFL)
     
-    integer :: ix^D,iFL
+    integer :: ix^D,iFL,ihmax
     double precision :: dx0,dxp,dxMax,widthMax,widthMin,B0,Bp
-    double precision :: xFnew,Enew,dxL0,dxR0,dEtot
+    double precision :: xFnew,Enew,dxL0,dxR0,dEtot,vs2Bnew,hmax
     logical :: splitB,mergeB
 
 
     widthMax=4.0*dFh
     widthMin=1.0*dFh
+    hmax=0.d0
+    ihmax=1
 
     ix1=3
     do while (ix1<numValid)
+      !print *, ix1,numR(ix1),mype
       dx0=abs(xF(ix1,1,1)-xF(ix1-1,1,1))
       dxMax=dx0
       B0=sqrt(wB(ix1,1,mag(1))**2+wB(ix1,1,mag(2))**2)
@@ -965,6 +1116,19 @@ contains
         if (Bp<1.d0) Bp=1.d0
         dxp=B0*dx0/Bp
         if (dxp>dxMax) dxMax=dxp
+
+        ! the highest field line
+        if (xF(ix1,ix2,1)>=0 .and. xF(ix1,ix2+1,1)<0) then
+          if (max(xF(ix1,ix2,2),xF(ix1,ix2+1,2))>hmax) then
+            hmax=max(xF(ix1,ix2,2),xF(ix1,ix2+1,2))
+            ihmax=ix1
+          endif
+        else if (xF(ix1,ix2,1)<=0 .and. xF(ix1,ix2+1,1)>0) then
+          if (max(xF(ix1,ix2,2),xF(ix1,ix2+1,2))>hmax) then
+            hmax=max(xF(ix1,ix2,2),xF(ix1,ix2+1,2))
+            ihmax=ix1
+          endif
+        endif
       enddo
 
       if (dxMax>widthMax) splitB=.TRUE.
@@ -974,26 +1138,32 @@ contains
       ! for Bfield split
       if (splitB) then
         xFnew=0.5d0*(xF(ix1,1,1)+xF(ix1-1,1,1))
-        Enew=0
+        Enew=0.d0
+        vs2Bnew=0.d0
         ! reduce energy from old field line and add
         ! energy to new field line
         dxL0=abs(xF(ix1+1,1,1)-xF(ix1,1,1))
         dEtot=Etot(ix1)*(0.25*dx0)/(0.5*(dxL0+dx0))
         Etot(ix1)=Etot(ix1)-dEtot
         Enew=Enew+dEtot
+        vs2Bnew=dEtot*vs2B(ix1)
         dxR0=abs(xF(ix1-1,1,1)-xF(ix1-2,1,1))
         dEtot=Etot(ix1-1)*(0.25*dx0)/(0.5*(dxR0+dx0))
         Etot(ix1-1)=Etot(ix1-1)-dEtot
         Enew=Enew+dEtot
+        vs2Bnew=vs2Bnew+dEtot*vs2B(ix1-1)
 
         do iFL=numFL,ix1+1,-1
           xF(iFL,1,1)=xF(iFL-1,1,1)
           xF(iFL,1,2)=0.d0
           Etot(iFL)=Etot(iFL-1)
+          vs2B(iFL)=vs2B(iFL-1)
         enddo
         xF(ix1,1,1)=xFnew
         Etot(ix1)=Enew
-        if (numValid<numFL) numValid=numValid+1
+        vs2B(ix1)=0.d0
+        if (Enew>0.d0) vs2B(ix1)=vs2Bnew/Enew
+        !if (numValid<numFL) numValid=numValid+1
       endif
 
       ! for Bfield merge
@@ -1001,26 +1171,56 @@ contains
         ! add energy to nearby field lines
         dxL0=abs(xF(ix1+1,1,1)-xF(ix1,1,1))
         dEtot=Etot(ix1)*(0.5*dx0)/(0.5*dx0+0.5*dxL0)
+        vs2Bnew=Etot(ix1+1)*vs2B(ix1+1)+dEtot*vs2B(ix1)
         Etot(ix1+1)=Etot(ix1+1)+dEtot
+        if (Etot(ix1+1)>0) then
+          vs2B(ix1+1)=vs2Bnew/Etot(ix1+1)
+        else
+          vs2B(ix1+1)=0.d0
+        endif
         dEtot=Etot(ix1)*(0.5*dxL0)/(0.5*dx0+0.5*dxL0)
+        vs2Bnew=Etot(ix1-1)*vs2B(ix1-1)+dEtot*vs2B(ix1)
         Etot(ix1-1)=Etot(ix1-1)+dEtot
+        if (Etot(ix1-1)>0) then
+          vs2B(ix1-1)=vs2Bnew/Etot(ix1-1)
+        else
+          vs2B(ix1-1)=0.d0
+        endif
 
         do iFL=ix1,numFL-1
           xF(iFL,1,1)=xF(iFL+1,1,1)
           xF(iFL,1,2)=0.d0
           Etot(iFL)=Etot(iFL+1)
+          vs2B(iFL)=vs2B(iFL+1)
         enddo
         xF(numFL,1,1)=2*xF(numFL-1,1,1)-xF(numFL-2,1,1)
         Etot(numFL)=0.d0
-        if (numValid>ix1) numValid=numValid-1
+        !if (numValid>ix1) numValid=numValid-1
       endif
 
       ix1=ix1+1
     enddo
 
 
+    !! add a new field line above the highest field line
+    !if (hmax<heta-4.0*dFh) then
+    !  xFnew=0.5d0*(xF(ihmax,1,1)+xF(ihmax+1,1,1))
+    !  Enew=0.d0
+    !  vs2Bnew=0.d0
+    !  do iFL=numFL,ihmax+2,-1
+    !    xF(iFL,1,1)=xF(iFL-1,1,1)
+    !    xF(iFL,1,2)=0.d0
+    !    Etot(iFL)=0.d0
+    !    vs2B(iFL)=0.d0
+    !  enddo
+    !  xF(ihmax+1,1,1)=xFnew
+    !  Etot(ihmax+1)=0.d0
+    !  vs2B(ihmax+1)=0.d0
+    !endif
+
     xFb(:,1)=xF(:,1,1)
     xFb(:,2)=0.d0
+    xF(ix1,1,1)=xFnew
 
 
   end subroutine split_Bfield
@@ -1047,10 +1247,6 @@ contains
 
     wTrans=.TRUE.
     interp=.TRUE.
-    !wTrans(rho_)=.TRUE.
-    !wTrans(mag(1))=.TRUE.
-    !wTrans(mag(2))=.TRUE.
-    !wTrans(mag(3))=.TRUE.
 
 
     ! left foot
@@ -1093,10 +1289,12 @@ contains
 
     t1=MPI_wtime()
 
+    !if (mype==0) print *, numValidL,numRL(1:numValidL), 'L'
+    !if (mype==0) print *, numValidR,numRR(1:numValidR), 'R'
 
   end subroutine update_Bfield
 
-  subroutine locate_heating(xFL,xFR)
+  subroutine locate_midpoint(xFL,xFR)
     ! find the point that is most closed to x=0 for each field line
     ! fast electrons has a given pitch angle mu0 at this point
     use mod_global_parameters
@@ -1104,11 +1302,13 @@ contains
 
     double precision :: xFL(numFL,numLP,ndim),xFR(numFL,numLP,ndim)
 
-    integer :: iFL,iLP,numRT
+    integer :: iFL,iLP,numRT,ix^D
     double precision :: minx,absx
 
     numTurnL=1
     numTurnR=1
+    iApexL=1
+    iApexR=1
 
     ! for B field line start from left part
     do iFL=1,numValidL
@@ -1142,7 +1342,22 @@ contains
     enddo
 
 
-  end subroutine locate_heating
+    ! looking for apex
+    do iFL=1,numValidR
+      do iLP=2,numRR(iFL)-2
+        if (xFR(iFL,iLP,1)>=0.d0 .and. xFR(iFL,iLP+1,1)<=0.d0) iApexR=iFL
+        if (xFR(iFL,iLP,1)<=0.d0 .and. xFR(iFL,iLP+1,1)>=0.d0) iApexR=iFL
+      enddo
+    enddo
+
+    do iFL=1,numValidL
+      do iLP=2,numRL(iFL)-2
+        if (xFL(iFL,iLP,1)>=0.d0 .and. xFL(iFL,iLP+1,1)<=0.d0) iApexL=iFL
+        if (xFL(iFL,iLP,1)<=0.d0 .and. xFL(iFL,iLP+1,1)>=0.d0) iApexL=iFL
+      enddo
+    enddo
+
+  end subroutine locate_midpoint
 
   subroutine update_heating_table(QeN,delta,Ec)
     ! calculate heating table based on shock compression ratio
@@ -1195,7 +1410,7 @@ contains
 
   end subroutine update_heating_table
 
-  subroutine get_heating_rate(xF,wBLR,QeLR,QeN,numR,numTurn,numValid,Etot,muB,eFlux)
+  subroutine get_heating_rate(xF,wBLR,QeLR,QeN,numR,numTurn,numValid,iApex,Etot,vs2B,vp2,eFlux)
     ! calculate local heating rate
     use mod_global_parameters
     use mod_usr_methods
@@ -1203,30 +1418,34 @@ contains
     integer :: numR(numFL),numTurn(numFL)
     double precision :: xF(numFL,numLP,ndim),QeLR(numFL,numLP)
     double precision :: wBLR(numFL,numLP,nw+ndir)
-    double precision :: QeN(numN),Etot(numFL),muB(numFL),eFlux(numFL)
-    integer :: numValid
+    double precision :: QeN(numN),Etot(numFL),vs2B(numFL),eFlux(numFL)
+    double precision :: vp2(numFL)
+    integer :: numValid,iApex
 
     double precision :: Bv(numFL,numLP,ndim),Np(numFL,numLP)
     double precision :: Ncol(numLP,2)
 
-    integer :: ix^D,iNlog,iFL,j
+    integer :: ix^D,iNlog,iFL,j,i
     double precision :: dl^D,dl,Bratio,Bxy0,BxyTurn,Bxy,mu0,mu,const
 
     logical :: Ereturn,ForReturn,BackReturn
     integer :: ireturn,iFreturn,iBreturn,iLPmin,iLPmax
     double precision :: ve,length,tau_e,dEdt
 
-    double precision :: width,width0,area,el
+    double precision :: width,width0,area,el,dNcol
     double precision :: jpara,Te,ED,B2,JdotB,Alfv,Ma,J2,Bn
     double precision :: E3,v1,v2,jE3
 
-    double precision :: eta,heta,reta,heta2,rad,rad2,vd,muMin
-    double precision :: mup,muT,muBsum,Esum
+    double precision :: eta,reta,rad,rad2,vd,muMin
+    double precision :: muT,vs2Bsum,Esum,vs2,ve2,vs2N,vp2N
 
+    double precision :: elp(-1:1)
 
-    mup=0.9
     muMin=0.1
     ve=1.d10/unit_velocity
+    ve2=1.0d20/(unit_velocity**2)
+    vs2=1.0d19/(unit_velocity**2)
+
 
     ! density and magnetic field
     Np(:,:)=wBLR(:,:,rho_)*unit_numberdensity
@@ -1238,83 +1457,99 @@ contains
     ! calculate fast electron energy flux for each field line
     eFlux=0
     QeLR=0
-    do ix1=2,numValid-1
-      muBsum=0.d0
+    do ix1=2,iApex
+      vs2Bsum=0.d0
       Esum=0.d0
 
       ! initial width of the flux tube element
       Bxy0=dsqrt(Bv(ix1,1,1)**2+Bv(ix1,1,2)**2)
+      !Bxy0=Busr
       width0=abs(xF(ix1+1,1,1)-xF(ix1-1,1,1))/2.d0
       BxyTurn=dsqrt(Bv(ix1,numTurn(ix1),1)**2+Bv(ix1,numTurn(ix1),2)**2)
 
       ! calculate particle acceleration rate
-      do ix2=1,numR(ix1)
+      do ix2=2,numR(ix1)-1
         Te=wBLR(ix^D,p_)/wBLR(ix^D,rho_)
+        v2=wBLR(ix^D,mom(2))/wBLR(ix^D,rho_)
 
-        if (Te>5) then
+        if (Te>5.d0 .and. v2<(-v2cr/unit_velocity)) then
           ! cosine pitch angle
-          Bxy=dsqrt(Bv(ix1,ix2,1)**2+Bv(ix1,ix2,2)**2)
-          const=(1-mup**2)/Bxy
+          !Bxy=dsqrt(Bv(ix1,ix2,1)**2+Bv(ix1,ix2,2)**2)
+          Bxy=0.d0
+          Bxy=Bxy+2.d0*dsqrt(Bv(ix1,ix2,1)**2+Bv(ix1,ix2,2)**2)
+          Bxy=Bxy+dsqrt(Bv(ix1,ix2-1,1)**2+Bv(ix1,ix2-1,2)**2)
+          Bxy=Bxy+dsqrt(Bv(ix1,ix2+1,1)**2+Bv(ix1,ix2+1,2)**2)
+          Bxy=Bxy/4.d0
+          const=vs2/Bxy
 
           ! scan area
           dl1=xF(ix1,ix2,1)-xF(ix1,ix2-1,1)
           dl2=xF(ix1,ix2,2)-xF(ix1,ix2-1,2)
           dl=dsqrt(dl1**2+dl2**2)
           width=width0*Bxy0/Bxy
+          !if (width>2*dFh) width=2*dFh
           area=dl*width
 
-          ! local electron acceleration rate
-          J2=0
-          do j=1,ndir
-            J2=J2+wBLR(ix^D,nw+j)**2
-          enddo
-          if (global_time<tar) then
-            heta = 5.
-            heta2 = 1.
-            reta = 0.8d0 * 0.3d0
-            rad=dsqrt(xF(ix^D,1)**2+(xF(ix^D,2)-heta)**2)
-            rad2=exp(-((xF(ix^D,2)-heta)**2)/heta2**2)
-            if (rad .lt. reta) then
-              eta=eta1*(2.d0*(rad/reta)**3-3.d0*(rad/reta)**2+1.d0)*rad2
-            else
-              eta=zero
-            endif
-          else
-            vd=sqrt(J2)/wBLR(ix^D,rho_)/q_e
-            if (vd>vc) eta=eta2*(vd/vc-1)
-            if (eta>etam) eta=etam
-          end if 
+          !! local electron acceleration rate
+          !J2=0.d0
+          !do j=1,ndir
+          !  J2=J2+2*wBLR(ix^D,nw+j)**2
+          !enddo
+          !!do j=1,ndir
+          !!  J2=J2+wBLR(ix1,ix2-1,nw+j)**2
+          !!enddo
+          !!do j=1,ndir
+          !!  J2=J2+wBLR(ix1,ix2+1,nw+j)**2
+          !!enddo
+          !!J2=J2/4.d0
 
-          !Te=wBLR(ix^D,p_)/wBLR(ix^D,rho_)
-          !if (eta>eta3) eta=eta3
-          !if (Te>5) el=eta*J2
-          !Esum=Esum+el*area*dt_update_Qe
-          !muBsum=muBsum+el*area*dt_update_Qe*const
+
+          !rad2=exp(-((xF(ix^D,2)-heta)**2)/heta2**2)
+          !vd=sqrt(J2)/wBLR(ix^D,rho_)/q_e
+          !eta=0.d0
+          !if (vd>vc) eta=eta2*(vd/vc-1.d0)*rad2
+          !if (eta>etam) eta=etam
+
+          do i=-1,1
+            J2=0.d0
+            do j=1,ndir
+              J2=J2+wBLR(ix1,ix2+i,nw+j)**2
+            enddo
+
+            rad2=exp(-((xF(ix1,ix2+i,2)-heta)**2)/heta2**2)
+            vd=sqrt(J2)/wBLR(ix1,ix2+i,rho_)/q_e
+            eta=0.d0
+            if (vd>vc) eta=eta2*(vd/vc-1.d0)*rad2
+            if (eta>etam) eta=etam
+            elp(i)=eta*J2
+          enddo
           
+          el=(elp(-1)+2.d0*elp(0)+elp(1))/4.d0
 
           ! energy got from local current/electric field
-          Alfv=sqrt(wBLR(ix^D,mag(1))**2+wBLR(ix^D,mag(2))**2+&
-                  wBLR(ix^D,mag(3))**2)/wBLR(ix^D,rho_)
-          Ma=wBLR(ix^D,mom(2))/wBLR(ix^D,rho_)
-          Te=wBLR(ix^D,p_)/wBLR(ix^D,rho_)
-          B2=0
-          do j=1,ndir
-            B2=B2+wBLR(ix^D,mag(j))**2
-          enddo
-          Bn=abs(wBLR(ix^D,mag(1))/10)
-          if (Bn>1) Bn=1
-          if (Te>5) el=Bn*eta*J2
+          !el=eta*J2  
           Esum=Esum+el*area*dt_update_Qe
-          muBsum=muBsum+el*area*dt_update_Qe*const
+          vs2Bsum=vs2Bsum+el*area*dt_update_Qe*const
+          Eplus=Eplus+el*area
         endif
       enddo 
 
+      if (Esum>0) then
+        vs2N=vs2Bsum*BxyTurn/Esum
+        vp2N=ve2-vs2N
+      else
+        vs2N=0.d0
+        vp2N=0.d0
+      endif
+
       if (Etot(ix1)+Esum>0) then
-        muB(ix1)=(Etot(ix1)*muB(ix1)+muBsum)/(Etot(ix1)+Esum)
+        vs2B(ix1)=(Etot(ix1)*vs2B(ix1)+vs2Bsum)/(Etot(ix1)+Esum)
+        vp2(ix1)=(Etot(ix1)*vp2(ix1)+Esum*vp2N)/(Etot(ix1)+Esum)
         Etot(ix1)=Etot(ix1)+Esum
       else
         Etot(ix1)=0
-        muB(ix1)=0
+        vs2B(ix1)=0
+        vp2(ix1)=0
       endif
 
 
@@ -1325,26 +1560,31 @@ contains
       BackReturn=.false.
       iFreturn=numR(ix1)
       iBreturn=1
-      if (muB(ix1)*BxyTurn<1) then
-        muT=sqrt(1-muB(ix1)*BxyTurn)
-      else
-        muT=0
-      endif
+      muT=sqrt(vp2(ix1)/(vp2(ix1)+vs2B(ix1)*BxyTurn))
+      const=(1.d0-muT**2)/BxyTurn
+
 
       ! for the field lines have fast electron, calculate
       ! trapping length
       if (muT>0 .and. Etot(ix1)>0) then
-        forward: do ix2=numTurn(ix1),numR(ix1)
+        iFreturn=numTurn(ix1)
+        iBreturn=numTurn(ix1)
+        forward: do ix2=numTurn(ix1),numR(ix1)-1
           ! pitch angle
-          Bxy=dsqrt(Bv(ix1,ix2,1)**2+Bv(ix1,ix2,2)**2)
-          const=muB(ix1)
+          !Bxy=dsqrt(Bv(ix1,ix2,1)**2+Bv(ix1,ix2,2)**2)
+          Bxy=0.d0
+          Bxy=Bxy+2.d0*dsqrt(Bv(ix1,ix2,1)**2+Bv(ix1,ix2,2)**2)
+          Bxy=Bxy+dsqrt(Bv(ix1,ix2-1,1)**2+Bv(ix1,ix2-1,2)**2)
+          Bxy=Bxy+dsqrt(Bv(ix1,ix2+1,1)**2+Bv(ix1,ix2+1,2)**2)
+          Bxy=Bxy/4.d0
+
           ! return of electrons owing to loop expension
           if (const*Bxy>=1) then
             ForReturn=.true.
             iFreturn=ix2-1
             exit forward
           else
-            mu=sqrt(1-const*Bxy)
+            mu=sqrt(1.d0-const*Bxy)
           endif
 
           ! scan area
@@ -1354,17 +1594,22 @@ contains
           length=length+dl
         enddo forward
 
-        backward: do ix2=numTurn(ix1),1,-1
+        backward: do ix2=numTurn(ix1),2,-1
           ! pitch angle
-          Bxy=dsqrt(Bv(ix1,ix2,1)**2+Bv(ix1,ix2,2)**2)
-          const=muB(ix1)
+          !Bxy=dsqrt(Bv(ix1,ix2,1)**2+Bv(ix1,ix2,2)**2)
+          Bxy=0.d0
+          Bxy=Bxy+2.d0*dsqrt(Bv(ix1,ix2,1)**2+Bv(ix1,ix2,2)**2)
+          Bxy=Bxy+dsqrt(Bv(ix1,ix2-1,1)**2+Bv(ix1,ix2-1,2)**2)
+          Bxy=Bxy+dsqrt(Bv(ix1,ix2+1,1)**2+Bv(ix1,ix2+1,2)**2)
+          Bxy=Bxy/4.d0
+
           ! return of electrons owing to loop expension
           if (const*Bxy>=1) then
             BackReturn=.true.
             iBreturn=ix2+1
             exit backward
           else
-            mu=sqrt(1-const*Bxy)
+            mu=sqrt(1.d0-const*Bxy)
           endif
 
           ! scan area
@@ -1397,33 +1642,47 @@ contains
         Ncol=0
         dEdt=0
         if (numTurn(ix1)<iLPmax-1) then
-          do ix2=numTurn(ix1),iLPmax-1
-            Bxy=dsqrt(Bv(ix1,ix2,1)**2+Bv(ix1,ix2,2)**2)
+          do ix2=numTurn(ix1)+1,iLPmax-1
+            !Bxy=dsqrt(Bv(ix1,ix2,1)**2+Bv(ix1,ix2,2)**2)
+            Bxy=0.d0
+            Bxy=Bxy+2.d0*dsqrt(Bv(ix1,ix2,1)**2+Bv(ix1,ix2,2)**2)
+            Bxy=Bxy+dsqrt(Bv(ix1,ix2-1,1)**2+Bv(ix1,ix2-1,2)**2)
+            Bxy=Bxy+dsqrt(Bv(ix1,ix2+1,1)**2+Bv(ix1,ix2+1,2)**2)
+            Bxy=Bxy/4.d0
+
             Bratio=Bxy/Bxy0
-            const=muB(ix1)
             mu=sqrt(1-const*Bxy)
             if (mu<muMin) mu=muMin
 
             ! column depth
             dl1=xF(ix1,ix2+1,1)-xF(ix1,ix2,1)
             dl2=xF(ix1,ix2+1,2)-xF(ix1,ix2,2)
-            dl=dsqrt(dl1**2+dl2**2)*unit_length/mu
-            Ncol(ix2,1)=Ncol(ix2-1,1)+dl*(Np(ix1,ix2)+Np(ix1,ix2-1))/2.0
+            dl=dsqrt(dl1**2+dl2**2)
+            dNcol=dl*unit_length*(Np(ix1,ix2)+Np(ix1,ix2-1))/(2.d0*mu)
+            Ncol(ix2,1)=Ncol(ix2-1,1)+dNcol
             width=width0*Bxy0/Bxy
 
             ! local heating rate
-            iNlog=int(log10(Ncol(ix2,1)/Nmin)/dNlog+0.5)+1
+            iNlog=int(log10((Ncol(ix2,1)+1.d0)/Nmin)/dNlog+0.5)+1
             if (iNlog<1) iNlog=1
             if (iNlog>numN) iNlog=numN
-            QeLR(ix^D)=QeN(iNlog)*Np(ix^D)*unit_length*(eFlux(ix1)*Bxy0/Bxy)*(muT/mu)/mu
+            !if (ForReturn) iNlog=1
+            !QeLR(ix^D)=QeN(iNlog)*Np(ix^D)*unit_length*(eFlux(ix1)*Bxy0/Bxy)*(muT/mu)/mu
+            QeLR(ix^D)=QeN(iNlog)*Np(ix^D)*unit_length*(eFlux(ix1)*Bxy0/Bxy)/mu
             dEdt=dEdt+QeLR(ix^D)*width*dl
+            Eminus=Eminus+QeLR(ix^D)*width*dl
             !QeLR(ix^D)=eFlux(ix1)
+            !QeLR(ix^D)=mu
+            !if (ForReturn) then
+            !  QeLR(ix^D)=0.d0
+            !  dEdt=0.d0
+            !endif
           enddo
         endif
 
         ! reduce total energy
-        if (ForReturn .eqv. .false.)  dEdt=eFlux(ix1)*width0
-        if (dEdt>eFlux(ix1)*width0) dEdt=eFlux(ix1)*width0
+        !if (ForReturn .eqv. .false.)  dEdt=eFlux(ix1)*width0
+        !if (dEdt>eFlux(ix1)*width0) dEdt=eFlux(ix1)*width0
         Etot(ix1)=Etot(ix1)-dEdt*dt_update_Qe
 
 
@@ -1431,33 +1690,52 @@ contains
         Ncol=0
         dEdt=0
         if (numTurn(ix1)>iLPmin+1) then
-          do ix2=numTurn(ix1)-1,iLPmin,-1
-            Bxy=dsqrt(Bv(ix1,ix2,1)**2+Bv(ix1,ix2,2)**2)
+          do ix2=numTurn(ix1),iLPmin+1,-1
+            !Bxy=dsqrt(Bv(ix1,ix2,1)**2+Bv(ix1,ix2,2)**2)
+            Bxy=0.d0
+            Bxy=Bxy+2.d0*dsqrt(Bv(ix1,ix2,1)**2+Bv(ix1,ix2,2)**2)
+            Bxy=Bxy+dsqrt(Bv(ix1,ix2-1,1)**2+Bv(ix1,ix2-1,2)**2)
+            Bxy=Bxy+dsqrt(Bv(ix1,ix2+1,1)**2+Bv(ix1,ix2+1,2)**2)
+            Bxy=Bxy/4.d0
+
             Bratio=Bxy/Bxy0
-            const=muB(ix1)
             mu=sqrt(1-const*Bxy)
             if (mu<muMin) mu=muMin
 
             ! column depth
             dl1=xF(ix1,ix2+1,1)-xF(ix1,ix2,1)
             dl2=xF(ix1,ix2+1,2)-xF(ix1,ix2,2)
-            dl=dsqrt(dl1**2+dl2**2)*unit_length/mu
-            Ncol(ix2,1)=Ncol(ix2+1,1)+dl*(Np(ix1,ix2)+Np(ix1,ix2+1))/2.0
+            dl=dsqrt(dl1**2+dl2**2)
+            if (ix2==numTurn(ix1)) then
+              dNcol=dl*unit_length*Np(ix1,ix2)/mu
+              Ncol(ix2,1)=1.d0
+            else
+              dNcol=dl*unit_length*(Np(ix1,ix2)+Np(ix1,ix2+1))/(2.d0*mu)
+              Ncol(ix2,1)=Ncol(ix2+1,1)+dNcol
+            endif
             width=width0*Bxy0/Bxy
 
             ! local heating rate
-            iNlog=int(log10(Ncol(ix2,1)/Nmin)/dNlog+0.5)+1
+            iNlog=int(log10((Ncol(ix2,1)+1.d0)/Nmin)/dNlog+0.5)+1
             if (iNlog<1) iNlog=1
             if (iNlog>numN) iNlog=numN
-            QeLR(ix^D)=QeN(iNlog)*Np(ix^D)*unit_length*(eFlux(ix1)*Bxy0/Bxy)*(muT/mu)/mu
+            !if (BackReturn) iNlog=1
+            !QeLR(ix^D)=QeN(iNlog)*Np(ix^D)*unit_length*(eFlux(ix1)*Bxy0/Bxy)*(muT/mu)/mu
+            QeLR(ix^D)=QeN(iNlog)*Np(ix^D)*unit_length*(eFlux(ix1)*Bxy0/Bxy)/mu
             dEdt=dEdt+QeLR(ix^D)*width*dl
+            Eminus=Eminus+QeLR(ix^D)*width*dl
             !QeLR(ix^D)=eFlux(ix1)
+            !QeLR(ix^D)=mu
+            !if (BackReturn) then
+            !  QeLR(ix^D)=0.d0
+            !  dEdt=0.d0
+            !endif
           enddo
         endif
 
         ! reduce total energy
-        if (BackReturn .eqv. .false.)  dEdt=eFlux(ix1)*width0
-        if (dEdt>eFlux(ix1)*width0) dEdt=eFlux(ix1)*width0
+        !if (BackReturn .eqv. .false.)  dEdt=eFlux(ix1)*width0
+        !if (dEdt>eFlux(ix1)*width0) dEdt=eFlux(ix1)*width0
         Etot(ix1)=Etot(ix1)-dEdt*dt_update_Qe
       endif
 
@@ -1703,7 +1981,7 @@ contains
 
   end subroutine get_spectra
 
-  subroutine get_HXR_line(Ee,spectra,numEe,dEe,xF,wBLR,numValid,numTurn,numR,eFlux,muB,HXRLR)
+  subroutine get_HXR_line(Ee,spectra,numEe,dEe,xF,wBLR,numValid,numTurn,numR,eFlux,vs2B,vp2,HXRLR)
     use mod_global_parameters
 
     double precision :: dEe
@@ -1712,7 +1990,7 @@ contains
     integer :: numR(numFL),numTurn(numFL)
     double precision :: xF(numFL,numLP,ndim),QeLR(numFL,numLP)
     double precision :: wBLR(numFL,numLP,nw+ndir)
-    double precision :: eFlux(numFL),muB(numFL),HXRLR(numFL,numLP)
+    double precision :: eFlux(numFL),vs2B(numFL),vp2(numFL),HXRLR(numFL,numLP)
 
     integer :: j,ix^D,iNlog,ireturn
     double precision :: Ncol(numLP),Np(numFL,numLP),Bv(numFL,numLP,ndim)
@@ -1722,7 +2000,7 @@ contains
     integer :: numEph,iEph,iEe
     double precision :: sigma0,sigmaBH,keV_erg,temp,Fe,depth
     double precision :: HXRLRs(numFL,numLP)
-    double precision :: BxyTurn
+    double precision :: BxyTurn,ve,ve2,vs2,muT
 
     HXRLR=0.d0
     HXRLRs=0.d0
@@ -1731,13 +2009,15 @@ contains
     sigma0=7.9e-25  ! [cm^2 keV]
     depth=1.0d9
     
-    mu0=0.95
-    muMin=0.1
     Ephmin=25
     Ephmax=50
     dEph=1.d0
     numEph=floor((Ephmax-Ephmin)/dEph)
 
+    muMin=0.1
+    ve=1.d10/unit_velocity
+    ve2=1.0d20/(unit_velocity**2)
+    vs2=1.0d19/(unit_velocity**2)
 
     ! density and magnetic field
     Np(:,:)=wBLR(:,:,rho_)*unit_numberdensity
@@ -1752,16 +2032,15 @@ contains
       ! initial width of the flux tube element
       Bxy0=dsqrt(Bv(ix1,1,1)**2+Bv(ix1,1,2)**2)
       BxyTurn=dsqrt(Bv(ix1,numTurn(ix1),1)**2+Bv(ix1,numTurn(ix1),2)**2)
-      mu0=0.00001
-      if (muB(ix1)*BxyTurn>=1) mu0=sqrt(1-muB(ix1)*BxyTurn)
+      muT=sqrt(vp2(ix1)/(vp2(ix1)+vs2B(ix1)*BxyTurn))
+      const=(1.d0-muT**2)/BxyTurn
 
 
-      if (mype==mod(ix1,npe)) then
+      if (mype==mod(ix1,npe) .and. eFlux(ix1)>0.d0) then
         Ncol=0
         FIELD1: do ix2=numTurn(ix1),numR(ix1)
           Bxy=dsqrt(Bv(ix1,ix2,1)**2+Bv(ix1,ix2,2)**2)
           Bratio=Bxy/Bxy0
-          const=muB(ix1)
           if (const*Bxy>=1) exit FIELD1
           mu=sqrt(1-const*Bxy)
           if (mu<muMin) mu=muMin
@@ -1785,7 +2064,7 @@ contains
                 temp=sqrt(1-Eph/Ee(iEe))
                 sigmaBH=(sigma0/(Eph*Ee(iEe)))*log((1+temp)/(1-temp))
                 HXRLRs(ix^D)=HXRLRs(ix^D)+spectra(iNlog,iEe)*Np(ix^D)*sigmaBH*&
-                                          (eFlux(ix1)*Bxy0/Bxy)*(mu0/mu)/mu
+                                          (eFlux(ix1)*Bxy0/Bxy)/mu
               endif
             enddo
           enddo
@@ -1795,7 +2074,6 @@ contains
         FIELD2: do ix2=numTurn(ix1)-1,1,-1
           Bxy=dsqrt(Bv(ix1,ix2,1)**2+Bv(ix1,ix2,2)**2)
           Bratio=Bxy/Bxy0
-          const=muB(ix1)
           if (const*Bxy>=1) exit FIELD2
           mu=sqrt(1-const*Bxy)
           if (mu<muMin) mu=muMin
@@ -1819,7 +2097,7 @@ contains
                 temp=sqrt(1-Eph/Ee(iEe))
                 sigmaBH=(sigma0/(Eph*Ee(iEe)))*log((1+temp)/(1-temp))
                 HXRLRs(ix^D)=HXRLRs(ix^D)+spectra(iNlog,iEe)*Np(ix^D)*sigmaBH*&
-                                          (eFlux(ix1)*Bxy0/Bxy)*(mu0/mu)/mu
+                                          (eFlux(ix1)*Bxy0/Bxy)/mu
               endif
             enddo
           enddo
@@ -1998,6 +2276,7 @@ contains
   ! corresponding normalization values (default value 1)
     use mod_global_parameters
     use mod_radiative_cooling
+    use mod_thermal_emission
 
     integer, intent(in)                :: ixI^L,ixO^L
     double precision, intent(in)       :: x(ixI^S,1:ndim)
@@ -2065,12 +2344,16 @@ contains
       w(ixO^S,nw+13+idir)=Efield(ixO^S,idir)
     enddo
 
+    ! SXR
+    !call get_sxr(ixI^L,ixO^L,w,x,HXRgrid,6,12)
+    w(ixO^S,nw+17)=HXRgrid(ixO^S)
+
   end subroutine specialvar_output
 
   subroutine specialvarnames_output(varnames)
   ! newly added variables need to be concatenated with the w_names/primnames string
     character(len=*) :: varnames
-    varnames='Te Alfv divB beta j1 j2 j3 eta lQ cQ bQ rad HXR_25_50 E1 E2 E3'
+    varnames='Te Alfv divB beta j1 j2 j3 eta lQ cQ bQ rad HXR_25_50 E1 E2 E3 SXR'
   end subroutine specialvarnames_output
 
   subroutine specialset_B0(ixI^L,ixO^L,x,wB0)
@@ -2115,15 +2398,13 @@ contains
     integer, intent(in) :: ixI^L, ixO^L, idirmin
     double precision, intent(in) :: w(ixI^S,nw), x(ixI^S,1:ndim)
     double precision :: current(ixI^S,7-2*ndir:3), eta(ixI^S)
-    double precision :: rad(ixI^S),heta,reta,reta2,heta2
+    double precision :: rad(ixI^S),reta,reta2
     double precision :: jc,jabs(ixI^S),vd(ixI^S),rad2(ixI^S)
 
     if (iprob==1) then
       eta(ixO^S)=0.d0
 
     else if (iprob>=2) then
-      heta = 5.
-      heta2 = 1.
       reta = 0.8d0 * 0.3d0
       !eta1 = 0.01d0
       !tar= 0.0d0
@@ -2148,6 +2429,7 @@ contains
         !eta(ixO^S)=eta0
       end if 
     endif
+
 
 
     !if (iprob==1) then
